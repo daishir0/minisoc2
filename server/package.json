@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3032",
+    "dev": "next dev -p 3042",
     "build": "next build",
-    "start": "next start -p 3032",
+    "start": "next start -p 3042",
     "lint": "eslint",
     "worker": "tsx worker/index.ts",
     "migrate": "tsx scripts/migrate.ts",
