@@ -5,8 +5,9 @@ import { headers } from 'next/headers';
 import { createAdmin, endSession, hasAdmin, startSession, verifyLogin } from '@/lib/auth';
 import { isLimited, rateLimited } from '@/lib/body';
 import { safeEqual } from '@/lib/secrets';
+import { verifyTotp } from '@/lib/totp';
 
-export type FormState = { error?: string };
+export type FormState = { error?: string; totp?: boolean };
 
 async function ip(): Promise<string> {
   return ((await headers()).get('x-forwarded-for') ?? '').split(',')[0].trim() || 'unknown';
@@ -16,12 +17,20 @@ export async function login(_: FormState, fd: FormData): Promise<FormState> {
   // only failed attempts count toward the limit
   const key = `login:${await ip()}`;
   if (isLimited(key, 10)) return { error: '試行回数が多すぎます。しばらくしてからやり直してください。' };
-  const id = await verifyLogin(String(fd.get('email') ?? ''), String(fd.get('password') ?? ''));
-  if (!id) {
+  const u = await verifyLogin(String(fd.get('email') ?? ''), String(fd.get('password') ?? ''));
+  if (!u) {
     rateLimited(key, 10, 10 * 60_000);
     return { error: 'メールアドレスまたはパスワードが違います。' };
   }
-  await startSession(id);
+  if (u.totpEnabled) {
+    const code = String(fd.get('code') ?? '').trim();
+    if (!code) return { totp: true, error: '認証アプリの6桁コードを入力してください。' };
+    if (!verifyTotp(u.totpSecret, code)) {
+      rateLimited(key, 10, 10 * 60_000);
+      return { totp: true, error: '認証コードが違います。' };
+    }
+  }
+  await startSession(u.id);
   redirect('/');
 }
 

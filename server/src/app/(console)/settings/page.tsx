@@ -1,7 +1,10 @@
+import QRCode from 'qrcode';
 import { ActionForm } from '@/components/ActionForm';
 import { Card, SEV_LABEL } from '@/components/ui';
+import { currentUser, getTotp } from '@/lib/auth';
+import { otpauthURL } from '@/lib/totp';
 import { getMail, getPolicy } from '@/lib/settings';
-import { saveMail, savePolicy } from '../actions';
+import { confirmTotp, disableTotp2fa, saveMail, savePolicy, startTotp } from '../actions';
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -13,9 +16,15 @@ function Field({ label, children, hint }: { label: string; children: React.React
   );
 }
 
-export default async function SettingsPage() {
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ totp?: string }> }) {
   const mail = await getMail();
   const p = await getPolicy();
+  const { totp: totpState } = await searchParams;
+  const user = await currentUser();
+  const totp = user ? await getTotp(user.id) : { enabled: false, secret: '' };
+  const qrSvg = totpState === 'setup' && user && totp.secret && !totp.enabled
+    ? await QRCode.toString(otpauthURL(user.email, totp.secret), { type: 'svg', margin: 1, width: 192 })
+    : '';
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card title="メール通知（Gmail）">
@@ -58,6 +67,43 @@ export default async function SettingsPage() {
           <Field label="ディスク使用率の上限（%）" hint="超えると生ログの保存を一時停止します（ルール判定と集計は続けます）。"><input name="diskGuardPercent" type="number" className="input" defaultValue={p.diskGuardPercent} /></Field>
           <button className="btn">保存</button>
         </ActionForm>
+      </Card>
+      <Card title="2段階認証（2FA）">
+        <p className="mb-3 text-sm text-muted">
+          ログインにパスワードに加えて認証アプリ（Google Authenticator、1Password など）の6桁コードを求めます。{user ? <>対象：<b>{user.email}</b></> : null}
+        </p>
+        {totpState === 'done' && <p className="mb-3 text-sm text-green-600">2段階認証を有効にしました。次回ログインからコードが必要です。</p>}
+        {totpState === 'off' && <p className="mb-3 text-sm text-green-600">2段階認証を無効にしました。</p>}
+        {totpState === 'bad' && <p className="mb-3 text-sm text-red-600">コードが違います。もう一度お試しください。</p>}
+        {totp.enabled ? (
+          <div className="space-y-3">
+            <p className="text-sm"><span className="rounded bg-green-600 px-2 py-0.5 text-xs text-white">有効</span></p>
+            <form action={disableTotp2fa} className="flex flex-wrap items-end gap-2">
+              <label className="text-sm">
+                <span className="mb-1 block text-muted">無効にするには現在の6桁コード</span>
+                <input name="code" inputMode="numeric" autoComplete="one-time-code" className="input w-40 font-mono" placeholder="123456" required />
+              </label>
+              <button className="btn-ghost text-red-600">2段階認証を無効にする</button>
+            </form>
+          </div>
+        ) : qrSvg ? (
+          <div className="space-y-3">
+            <p className="text-sm">認証アプリで下のQRコードを読み取り、表示された6桁コードを入力してください。</p>
+            <div className="inline-block rounded bg-white p-2" dangerouslySetInnerHTML={{ __html: qrSvg }} />
+            <p className="text-xs text-muted">QRが読めない場合の手動キー：<code className="break-all font-mono">{totp.secret}</code></p>
+            <form action={confirmTotp} className="flex flex-wrap items-end gap-2">
+              <label className="text-sm">
+                <span className="mb-1 block text-muted">認証アプリの6桁コード</span>
+                <input name="code" inputMode="numeric" autoComplete="one-time-code" className="input w-40 font-mono" placeholder="123456" required />
+              </label>
+              <button className="btn">有効にする</button>
+            </form>
+          </div>
+        ) : (
+          <form action={startTotp}>
+            <button className="btn">2段階認証を設定する</button>
+          </form>
+        )}
       </Card>
     </div>
   );

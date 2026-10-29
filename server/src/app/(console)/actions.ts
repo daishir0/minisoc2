@@ -2,7 +2,8 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
-import { requireUser } from '@/lib/auth';
+import { disableTotp, enableTotp, getTotp, requireUser, startTotpSecret } from '@/lib/auth';
+import { verifyTotp } from '@/lib/totp';
 import { recordEvent } from '@/lib/events';
 import { q } from '@/lib/db';
 import { sendMail } from '@/lib/mail';
@@ -83,6 +84,39 @@ export async function savePolicy(_: Result, fd: FormData): Promise<Result> {
   revalidatePath('/settings');
   const bad = parseAllowList(String(fd.get('defaultAllowedIps') ?? '')).bad;
   return { ok: bad.length ? `保存しました。無効な許可IPは無視しました：${bad.slice(0, 5).join(', ')}` : '保存しました。' };
+}
+
+// --- Admin two-factor (TOTP) ---
+export async function startTotp(): Promise<void> {
+  const u = await requireUser();
+  await startTotpSecret(u.id);
+  revalidatePath('/settings');
+  redirect('/settings?totp=setup');
+}
+
+export async function confirmTotp(fd: FormData): Promise<void> {
+  const u = await requireUser();
+  const code = String(fd.get('code') ?? '').trim();
+  const { secret } = await getTotp(u.id);
+  if (secret && verifyTotp(secret, code)) {
+    await enableTotp(u.id);
+    await opsEvent('2段階認証を有効化');
+    redirect('/settings?totp=done');
+  }
+  redirect('/settings?totp=bad');
+}
+
+export async function disableTotp2fa(fd: FormData): Promise<void> {
+  const u = await requireUser();
+  // require a current valid code to turn it off (prevents an open session from silently disabling it)
+  const code = String(fd.get('code') ?? '').trim();
+  const { enabled, secret } = await getTotp(u.id);
+  if (enabled && secret && !verifyTotp(secret, code)) {
+    redirect('/settings?totp=bad');
+  }
+  await disableTotp(u.id);
+  await opsEvent('2段階認証を無効化');
+  redirect('/settings?totp=off');
 }
 
 export async function setAlertStatus(ids: string[], status: 'open' | 'ack' | 'resolved'): Promise<void> {
