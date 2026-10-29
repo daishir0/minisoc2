@@ -139,8 +139,8 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
                   <span className={Number(p.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {p.k}</span>
                   <span className={Number(p.c) ? 'text-orange-600' : 'text-muted'}>緊急 {p.c}</span>
                   <span className={Number(p.hi) ? 'text-yellow-600' : 'text-muted'}>高 {p.hi}</span>
-                  <Link href={`/systems/${p.id}`} className="text-accent">編集</Link>
-                  <form action={unregisterSystem}><input type="hidden" name="id" value={p.id} /><button className="text-red-600 hover:underline">はずす</button></form>
+                  <Link href={`/systems/${p.id}`} className="btn-ghost">編集</Link>
+                  <form action={unregisterSystem}><input type="hidden" name="id" value={p.id} /><PendingButton className="btn-ghost text-red-600" pendingText="解除中…">はずす</PendingButton></form>
                 </span>
               </li>
             ))}
