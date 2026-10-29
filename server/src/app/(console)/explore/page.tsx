@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { CveSearch } from '@/components/CveSearch';
 import { ExploreTabs } from '@/components/ExploreTabs';
@@ -8,6 +9,7 @@ export default async function ExplorePage() {
   const recent = await q<{ cve: string; fetched_at: Date }>('SELECT cve, fetched_at FROM cve_lookups ORDER BY fetched_at DESC LIMIT 8');
   return (
     <>
+      <Breadcrumbs items={[CRUMB.home, { label: "検知" }]} />
       <ExploreTabs />
       <Card title="CVE照会：この CVE はうちに関係ある？">
         <p className="mb-3 text-sm text-muted">記事やニュースで見かけた CVE を入れると、ホストごとに「影響あり／なし／判定できない」を根拠つきで返します。上部の検索窓からも照会できます。</p>

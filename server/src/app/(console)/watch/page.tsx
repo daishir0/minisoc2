@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ActionForm } from '@/components/ActionForm';
 import { Card, ago, vulnLink } from '@/components/ui';
@@ -14,6 +15,7 @@ export default async function WatchPage() {
   );
   return (
     <>
+      <Breadcrumbs items={[CRUMB.home, { label: "CVE監視" }]} />
       <Card title="CVEを監視する">
         <p className="mb-3 text-sm text-muted">監視中のCVEは、どのホストに出ても必ず通知し、修正が届いた時にも通知します（特定の脆弱性を、全ホストに修正が行き渡るまで追跡する用途）。</p>
         <ActionForm action={addWatch} className="flex flex-wrap gap-2">

@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Timeline } from '@/components/Timeline';
@@ -20,6 +21,7 @@ export default async function ChangesPage({ searchParams }: { searchParams: Prom
   const groups = await timeline({ days, importantOnly: !all, hostId, kind });
   return (
     <>
+      <Breadcrumbs items={[CRUMB.home, { label: "検知" }]} />
       <ExploreTabs />
     <Card title="変化の履歴">
       <form className="mb-4 grid grid-cols-2 gap-2 text-sm sm:flex sm:flex-wrap" action="/changes">

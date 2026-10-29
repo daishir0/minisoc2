@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { AssetTabs } from '@/components/AssetTabs';
 import { Card } from '@/components/ui';
@@ -22,7 +23,7 @@ export default async function SystemsPage({ searchParams }: { searchParams: Prom
        count(f.id) FILTER (WHERE f.severity='medium') AS m, count(f.id) FILTER (WHERE f.kev) AS k, count(f.id) AS total
      FROM systems s JOIN hosts h ON h.id=s.host_id
      LEFT JOIN findings f ON f.host_id=s.host_id AND f.status='open' AND s.root = ANY(f.systems)
-     WHERE s.ignored = $1
+     WHERE s.ignored = $1 AND s.origin = 'manual' AND s.root <> '__os__'
      GROUP BY s.id, h.name
      ORDER BY h.name, (s.root = '__os__') DESC, CASE s.exposure WHEN 'public' THEN 0 WHEN 'internal' THEN 1 WHEN 'unknown' THEN 2 ELSE 3 END,
        count(f.id) FILTER (WHERE f.kev) DESC, count(f.id) FILTER (WHERE f.severity='critical') DESC, count(f.id) FILTER (WHERE f.severity='high') DESC, s.name`,
@@ -34,20 +35,20 @@ export default async function SystemsPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
+      <Breadcrumbs items={[CRUMB.home, { label: "資産" }]} />
       <AssetTabs />
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">システム</h1>
+        <h1 className="text-xl font-semibold">プロジェクト</h1>
         <div className="flex gap-3 text-sm">
           <Link href="/systems" className={showIgnored ? 'text-muted' : 'font-semibold'}>監視中</Link>
           <Link href="/systems?ignored=1" className={showIgnored ? 'font-semibold' : 'text-muted'}>除外中</Link>
         </div>
-        <Link href="/systems/new" className="btn-ghost ml-auto">システムを登録</Link>
+        <Link href="/systems/new" className="btn-ghost ml-auto">プロジェクトを登録</Link>
       </div>
       <p className="text-sm text-muted">
-        ホスト上の開発システム（プロジェクト）と、共有の Python 環境です。通常はエージェントが lockfile・venv の場所から自動で検出します。
-        公開区分や重要度、場所の固定は、各システムの画面で設定できます。「除外」したシステムの脆弱性は数えず、通知もしません。
+        <b>登録済み</b>のプロジェクトだけを表示します（評価＝SBOM・脆弱性・改ざん検知は登録済みのみ対象）。自動検出された<b>未登録の候補</b>は各<Link href="/hosts" className="text-accent">ホスト</Link>の画面で承認登録してください。公開区分・重要度・場所の固定・除外は各プロジェクトの画面で設定します。
       </p>
-      {rows.length === 0 && <Card><p className="text-sm text-muted">{showIgnored ? '除外中のシステムはありません。' : 'まだシステムがありません（エージェントの次回報告で作られます）。'}</p></Card>}
+      {rows.length === 0 && <Card><p className="text-sm text-muted">{showIgnored ? '除外中のプロジェクトはありません。' : 'まだ登録済みプロジェクトはありません。ホストの画面で候補を承認登録してください。'}</p></Card>}
       {[...byHost.entries()].map(([host, list]) => (
         <Card key={host} title={`${host}（${list.length}システム）`}>
           <ul className="divide-y divide-line">

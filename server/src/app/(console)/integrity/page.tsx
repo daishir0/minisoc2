@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Card, ago } from '@/components/ui';
@@ -26,6 +27,7 @@ export default async function IntegrityPage() {
 
   return (
     <>
+      <Breadcrumbs items={[CRUMB.home, { label: "検知" }]} />
       <ExploreTabs />
       <Card title="ファイル改ざん検知（AIDE相当）">
         <p className="text-sm text-muted">

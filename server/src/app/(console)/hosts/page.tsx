@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { AssetTabs } from '@/components/AssetTabs';
 import { Card, ago } from '@/components/ui';
@@ -17,6 +18,7 @@ export default async function HostsPage() {
   );
   return (
     <>
+      <Breadcrumbs items={[CRUMB.home, { label: "資産" }]} />
       <AssetTabs />
       <div className="flex flex-wrap gap-2 text-sm">
         <Link className="btn-ghost" href="/enroll">エージェント型ホストを追加</Link>

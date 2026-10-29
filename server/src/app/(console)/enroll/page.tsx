@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { Card, ago } from '@/components/ui';
 import { q } from '@/lib/db';
 import { revokeEnrollToken } from '../actions';
@@ -10,6 +11,7 @@ export default async function EnrollPage() {
   );
   return (
     <>
+      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, { label: "ホスト追加" }]} />
       <Card title="ホストを追加">
         <p className="mb-4 text-sm text-muted">
           エージェントは cron やタスクスケジューラから定期的に起動され、パッケージ・OSの未適用セキュリティ更新・ホストの状態を集めてここへ報告し、終了します。

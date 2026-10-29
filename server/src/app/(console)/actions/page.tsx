@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { Card, ago } from '@/components/ui';
 import { q } from '@/lib/db';
@@ -26,6 +27,7 @@ export default async function ActionsPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
+      <Breadcrumbs items={[CRUMB.home, { label: "対応" }]} />
       <div>
         <h1 className="text-xl font-semibold">対応</h1>
         <p className="mt-1 text-sm text-muted">

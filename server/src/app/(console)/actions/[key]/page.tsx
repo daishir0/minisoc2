@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Card, Kev, Sev, vulnLink } from '@/components/ui';
@@ -33,7 +34,7 @@ export default async function TaskPage({ params, searchParams }: { params: Promi
 
   return (
     <>
-      <div className="text-sm text-muted"><Link href="/actions" className="text-accent">対応</Link> › {t.host} › {t.root === '__os__' ? 'OS' : t.name}</div>
+      <Breadcrumbs items={[CRUMB.home, CRUMB.actions, { label: t.host }, { label: t.root === '__os__' ? 'OS' : t.name }]} />
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold">{t.root === '__os__' ? `${t.host} の OS を更新` : `${t.host}／${t.name} の依存を更新`}</h1>
         {t.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}

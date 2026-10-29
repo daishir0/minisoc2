@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import QRCode from 'qrcode';
 import { ActionForm } from '@/components/ActionForm';
 import { Card, SEV_LABEL } from '@/components/ui';
@@ -26,6 +27,8 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     ? await QRCode.toString(otpauthURL(user.email, totp.secret), { type: 'svg', margin: 1, width: 192 })
     : '';
   return (
+    <>
+      <Breadcrumbs items={[CRUMB.home, { label: '設定' }]} />
     <div className="grid gap-6 lg:grid-cols-2">
       <Card title="メール通知（Gmail）">
         <p className="mb-4 text-sm text-muted">
@@ -106,5 +109,6 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
         )}
       </Card>
     </div>
+    </>
   );
 }

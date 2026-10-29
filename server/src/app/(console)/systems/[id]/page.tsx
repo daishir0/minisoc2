@@ -6,6 +6,7 @@ import { STACK_KEYS, detectStack } from '@/lib/systemmeta';
 import { taskKey } from '@/lib/tasks';
 import { addExclude, deleteSystem, removeExclude } from '../../actions';
 import { SystemForm } from '../SystemForm';
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 
 export default async function SystemPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ saved?: string }> }) {
   const { id } = await params;
@@ -49,13 +50,21 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
 
   return (
     <>
-      <div className="text-sm text-muted"><Link href="/systems" className="text-accent">資産</Link> › <Link href={`/hosts/${s.host_id}`} className="text-accent">{s.host}</Link> › {s.name}</div>
+      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, CRUMB.projects, { label: s.host, href: `/hosts/${s.host_id}` }, { label: s.name }]} />
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">{s.name}</h1>
         {s.ignored && <span className="rounded bg-slate-500 px-2 py-0.5 text-xs text-white">除外中</span>}
         <span className="text-sm text-muted">{s.host} · {s.root === '__os__' ? 'OSのパッケージマネージャ' : <span className="break-all font-mono">{s.root}</span>}</span>
       </div>
-      {saved && <p className="text-sm text-green-600">保存しました。グループ分けの変更は、このホストの次回の報告から反映されます。</p>}
+      {saved && (
+        <div className="rounded-md border border-green-500 bg-green-50 px-3 py-2 text-sm text-green-700 dark:bg-green-950 dark:text-green-200">
+          保存しました。登録済みプロジェクトとして評価対象になります（次回の照合から反映）。
+          <div className="mt-1 flex gap-3">
+            <Link href={`/hosts/${s.host_id}`} className="text-accent">← {s.host} に戻る（他の候補を登録）</Link>
+            <Link href="/systems" className="text-accent">プロジェクト一覧へ</Link>
+          </div>
+        </div>
+      )}
       {s.root !== '__os__' && (
         <Card title="このシステムに影響する脆弱性（KEV・緊急）">
           <ul className="divide-y divide-line text-sm">

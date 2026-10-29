@@ -5,6 +5,7 @@ import { q, q1 } from '@/lib/db';
 import type { HostState } from '@/lib/payload';
 import { hostAction, pollPullNow, savePullAide } from '../../actions';
 import { PendingButton } from '@/components/PendingButton';
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 
 export default async function HostPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -39,7 +40,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
 
   return (
     <>
-      <div className="text-sm text-muted"><Link href="/hosts" className="text-accent">資産</Link> › ホスト › {h.name}</div>
+      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, CRUMB.hosts, { label: h.name }]} />
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">{h.name}</h1>
         {h.kind === 'pull' && <span className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white">プル型（SSH）</span>}

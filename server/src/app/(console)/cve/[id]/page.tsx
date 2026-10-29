@@ -1,3 +1,4 @@
+import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { CveSearch } from '@/components/CveSearch';
@@ -30,6 +31,7 @@ export default async function CveDetail({ params, searchParams }: { params: Prom
 
   return (
     <>
+      <Breadcrumbs items={[CRUMB.home, CRUMB.detect, CRUMB.cveLookup]} />
       <CveSearch />
       <section className={`rounded-lg border-2 p-4 ${o.cls}`}>
         <div className="flex flex-wrap items-center gap-2">
