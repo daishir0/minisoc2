@@ -1,0 +1,23 @@
+node_modules/
+.next/
+out/
+agent/dist/
+server/data/
+server/test-results/
+server/playwright-report/
+*.tsbuildinfo
+next-env.d.ts
+
+# secrets and host-specific files (never commit)
+.env
+.env*.local
+*.pem
+*.key
+infrastructure/
+memo.md
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+logs/
+outputs/
+.DS_Store

@@ -1,0 +1,15 @@
+{
+  "name": "minisoc2",
+  "private": true,
+  "license": "MIT",
+  "scripts": {
+    "keygen": "node scripts/keygen.mjs",
+    "agent:build": "node agent/scripts/build.mjs",
+    "agent:release": "node scripts/release.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

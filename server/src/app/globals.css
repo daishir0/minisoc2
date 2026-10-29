@@ -1,0 +1,56 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f6f7f9;
+  --panel: #ffffff;
+  --fg: #1c2330;
+  --muted: #5b6474;
+  --line: #e2e5ea;
+  --accent: #2557d6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f131a;
+    --panel: #171c25;
+    --fg: #e4e8ef;
+    --muted: #9099a8;
+    --line: #2a313d;
+    --accent: #7aa2ff;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-fg: var(--fg);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+}
+
+.input {
+  /* 16px on phones so iOS does not zoom into focused fields */
+  @apply w-full rounded-md border border-line bg-panel px-3 py-2 text-base outline-none focus:border-accent sm:text-sm;
+}
+.btn {
+  @apply inline-flex items-center justify-center whitespace-nowrap rounded-md bg-accent px-3 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50 dark:text-black;
+}
+.btn-ghost {
+  @apply inline-flex items-center justify-center rounded-md border border-line px-3 py-1.5 text-sm hover:bg-bg;
+}
+.tbl {
+  @apply w-full text-sm;
+}
+.tbl th {
+  @apply whitespace-nowrap border-b border-line px-3 py-2 text-left text-xs font-semibold uppercase tracking-wide text-muted;
+}
+.tbl td {
+  @apply border-b border-line px-3 py-2 align-top;
+}
