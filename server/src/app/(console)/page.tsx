@@ -10,12 +10,14 @@ import { dismissOnboarding } from './actions';
 
 // Home: the state of things in 30 seconds. Only KEV / critical / detections are surfaced.
 export default async function Home() {
-  const [t] = await q<{ kev: string; critical: string; stale: string; hosts: string; exposed: string }>(
+  const [t] = await q<{ kev: string; critical: string; stale: string; hosts: string; exposed: string; logthreat: string; filechange: string }>(
     `SELECT (SELECT count(*) FROM findings WHERE status='open' AND kev) AS kev,
             (SELECT count(*) FROM findings WHERE status='open' AND NOT kev AND severity='critical') AS critical,
             (SELECT count(*) FROM hosts WHERE stale_alerted AND NOT disabled) AS stale,
             (SELECT count(*) FROM hosts WHERE NOT disabled) AS hosts,
-            (SELECT count(*) FROM systems WHERE exposure <> 'unknown') AS exposed`,
+            (SELECT count(*) FROM systems WHERE exposure <> 'unknown') AS exposed,
+            (SELECT count(*) FROM alerts WHERE kind='log' AND status='open' AND created_at > now() - interval '24 hours') AS logthreat,
+            (SELECT count(*) FROM change_events WHERE kind='host_state' AND important AND title LIKE '%監視ファイル%' AND created_at > now() - interval '7 days') AS filechange`,
   );
   const tasks = (await listTasks()).filter((x) => x.status !== 'hold' || x.overdue);
   const det = await openDetections(5);
@@ -34,6 +36,7 @@ export default async function Home() {
   ];
   const showOnboarding = !onboarding.dismissed && steps.some((s) => !s.done);
   const nKev = Number(t.kev), nCrit = Number(t.critical), nStale = Number(t.stale);
+  const nLog = Number(t.logthreat), nFile = Number(t.filechange);
 
   return (
     <>
@@ -50,12 +53,13 @@ export default async function Home() {
         </Card>
       )}
 
-      {nKev + nCrit + nStale === 0 ? (
-        <Card><p className="text-lg">🟢 KEV・緊急の未対応はありません。報告が止まっているホストもありません（全{t.hosts}台）。</p></Card>
+      {nKev + nCrit + nStale + nLog + nFile === 0 ? (
+        <Card><p className="text-lg">🟢 KEV・緊急の未対応、ログ脅威、監視ファイルの重要な変化、報告停止はありません（全{t.hosts}台）。</p></Card>
       ) : (
-        <div className="grid grid-cols-3 gap-3">
-          <Stat label="KEV（悪用確認済み）" value={nKev || '—'} href="/findings?kev=1" tone={nKev ? 'text-red-600' : 'text-muted'} />
-          <Stat label="緊急（CVSS 9.0以上）" value={nCrit || '—'} href="/findings?severity=critical" tone={nCrit ? 'text-orange-500' : 'text-muted'} />
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <Stat label="脆弱性（KEV・緊急）" value={nKev + nCrit || '—'} href="/findings" tone={nKev + nCrit ? 'text-red-600' : 'text-muted'} />
+          <Stat label="ログ脅威（24時間）" value={nLog || '—'} href="/logs" tone={nLog ? 'text-orange-500' : 'text-muted'} />
+          <Stat label="ファイル改ざん（7日・重要）" value={nFile || '—'} href="/integrity" tone={nFile ? 'text-red-600' : 'text-muted'} />
           <Stat label={`報告停止（全${t.hosts}台）`} value={nStale || '—'} href="/hosts" tone={nStale ? 'text-orange-500' : 'text-muted'} />
         </div>
       )}

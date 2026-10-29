@@ -3,12 +3,13 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-// Four destinations; everything else lives inside them.
+// Four destinations mapped to the workflow: register assets -> auto-detect (vuln/log/integrity)
+// -> remediate. Everything else lives inside them.
 export const SECTIONS = [
   { href: '/', label: 'ホーム', icon: '🏠', match: (p: string) => p === '/' },
-  { href: '/actions', label: '対応', icon: '✅', match: (p: string) => p.startsWith('/actions') || p.startsWith('/alerts') },
-  { href: '/assets', label: '資産', icon: '🖥', match: (p: string) => /^\/(assets|hosts|systems|enroll)/.test(p) },
-  { href: '/explore', label: '調べる', icon: '🔎', match: (p: string) => /^\/(explore|cve|findings|logs|changes)/.test(p) },
+  { href: '/hosts', label: '資産', icon: '🖥', match: (p: string) => /^\/(assets|hosts|systems|enroll)/.test(p) },
+  { href: '/findings', label: '検知', icon: '🛡', match: (p: string) => /^\/(detect|findings|logs|integrity|changes|explore|cve|alerts|watch)/.test(p) },
+  { href: '/actions', label: '対応', icon: '✅', match: (p: string) => p.startsWith('/actions') },
 ];
 
 export function TopNav({ badge }: { badge: number }) {
