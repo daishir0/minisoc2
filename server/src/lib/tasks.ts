@@ -42,6 +42,43 @@ export interface Task {
   protects: Protected[]; // systems that this fix protects
 }
 
+// A copy-paste prompt for Claude Code running ON the target host: do exactly this fix, safely,
+// and nothing else. This is advisory only — the human reviews it and runs Claude Code themselves;
+// minisoc2 never executes anything on a host.
+export function remediationPrompt(t: Task, opts: { pull?: boolean } = {}): string {
+  const isOs = t.root === '__os__';
+  const pkgLines = t.packages.map((p) => `- ${p.name}: ${p.current || '(現在不明)'} → ${p.target || '(修正版は要確認)'}`).join('\n');
+  const where = isOs ? 'OSパッケージ' : `プロジェクト ${t.name}（${t.root}）`;
+  const lines = [
+    `あなたはホスト「${t.host}」上で動作している Claude Code です。以下の脆弱性修正だけを、安全に実施してください。ここに書かれていない変更は行わないこと。`,
+    ``,
+    `# 対象`,
+    `- ${where}`,
+    `- 解消する脆弱性: KEV ${t.kev}件・緊急（CVSS9.0+）${t.critical}件`,
+    `- 更新するパッケージ:`,
+    pkgLines || '-（下のコマンドに従ってください）',
+    ``,
+    `# 手順`,
+    `1. まず現在の状態を確認する（対象パッケージの現行バージョン、関連して稼働中のサービス）。破壊的変更やメジャー更新が含まれないか確認する。`,
+    isOs
+      ? `2. 次のコマンドで対象パッケージだけを更新する:\n\n    ${t.command}\n`
+      : `2. ${t.root} に移動し、次を実行して更新する:\n\n    ${t.command}\n\n   その後、ビルド／テストを実行して動作を確認する。壊れた場合はロックファイルを戻してロールバックする。`,
+    t.reboot ? `3. kernel を含むため、作業可能な時間帯に \`sudo reboot\` で再起動する（利用者に影響する場合は事前合意を取る）。` : `3. 更新後、サービスの再起動が必要なら最小限で再起動する。`,
+    `4. 実施内容と結果（更新前後のバージョン、再起動の要否、残課題）を簡潔に報告する。`,
+    ``,
+    `# 注意`,
+    `- sudo を伴う破壊的操作やサービス停止は、必要最小限にとどめ、不明な点は実行前に確認すること。`,
+    `- minisoc2 がこの修正を監視しており、次回の報告（最大1時間）で自動的に「解消」になります。`,
+  ];
+  if (opts.pull) {
+    lines.unshift(
+      `※ このホストは共用ホスティング（root権限なし）です。CLIで更新できないもの（PHP本体のバージョンなど）は、ホスティングのコントロールパネルで変更してください。以下はユーザー権限で可能な範囲の手順です。`,
+      ``,
+    );
+  }
+  return lines.join('\n');
+}
+
 // The system root is base64url-encoded: a path segment must not contain "/" (or "%2F", which
 // web servers such as Apache reject by default).
 export const taskKey = (hostId: string, root: string) => `${hostId}~${Buffer.from(root).toString('base64url')}`;

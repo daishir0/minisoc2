@@ -1,9 +1,10 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Card, Kev, Sev, vulnLink } from '@/components/ui';
-import { q } from '@/lib/db';
+import { CopyBlock } from '@/components/CopyBlock';
+import { q, q1 } from '@/lib/db';
 import { EXPOSURE } from '@/lib/systemmeta';
-import { listTasks, parseTaskKey } from '@/lib/tasks';
+import { listTasks, parseTaskKey, remediationPrompt } from '@/lib/tasks';
 import { VEX_JUSTIFICATIONS, VEX_LABEL } from '@/lib/vex';
 import { saveTask, taskNotAffected } from '../../actions';
 
@@ -13,6 +14,7 @@ export default async function TaskPage({ params, searchParams }: { params: Promi
   const k = parseTaskKey(decodeURIComponent(key));
   if (!k) notFound();
   const [t] = await listTasks({ hostId: k.hostId, root: k.root });
+  const kindRow = await q1<{ kind: string }>('SELECT kind FROM hosts WHERE id=$1', [k.hostId]);
   if (!t) {
     return (
       <Card title="作業">
@@ -46,6 +48,12 @@ export default async function TaskPage({ params, searchParams }: { params: Promi
             <pre className="select-all whitespace-pre-wrap break-all rounded bg-bg p-3 text-xs">{t.command}</pre>
             {t.reboot && <pre className="mt-2 select-all rounded bg-bg p-3 text-xs">sudo reboot</pre>}
             <p className="mt-2 text-xs text-muted">更新後、次のエージェントの報告（最大1時間）で自動的に「解消」になります。</p>
+          </Card>
+          <Card title="Claude Code で修正（プロンプトをコピー）">
+            <p className="mb-2 text-sm text-muted">
+              対象ホスト上で <code>claude</code>（Claude Code）を起動し、下のプロンプトを貼り付けて実行すると、この修正だけを安全に適用できます。<b>内容を確認してから実行してください。</b>minisoc2 がサーバーから実行することはありません。
+            </p>
+            <CopyBlock text={remediationPrompt(t, { pull: kindRow?.kind === 'pull' })} />
           </Card>
           <Card title={`この作業で守られるシステム（${t.protects.length}）`}>
             {t.protects.length === 0 ? <p className="text-sm text-muted">このホストで、この修正に関係するサービスは見つかりませんでした。</p> : (
