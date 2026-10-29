@@ -25,26 +25,37 @@ export interface PullTarget {
 }
 
 // Paths come from the admin; keep them to a safe charset so they cannot break out of the script.
+// No spaces or shell metacharacters, so the paths are safe to use UNQUOTED in the remote script,
+// which is required for "~" and "*" to expand (shared-hosting paths like ~/www, ~/log/*.gz).
 export function safePath(p: string): boolean {
-  return /^[A-Za-z0-9 ._/*~-]{1,512}$/.test(p) && !p.includes('..');
+  return /^[A-Za-z0-9._/*~-]{1,512}$/.test(p) && !p.includes('..');
 }
-const sh = (p: string) => `'${p.replace(/'/g, "'\\''")}'`;
 
-const LOCK_MAX = 400;          // lockfiles
+const LOCK_MAX = 400;              // lockfiles
 const FILE_MAX = 4 * 1024 * 1024;  // bytes per lockfile
 const LOG_CHUNK = 8 * 1024 * 1024; // bytes read per log file per poll
+const LOG_AGE_DAYS = 3;            // only read logs modified within this many days (shared hosts keep a year of dailies)
+const LOG_BUDGET = 32 * 1024 * 1024; // total decompressed log bytes per poll
 
 function buildScript(t: PullTarget): string {
   const scan = t.scan_paths.filter(safePath);
   const logs = t.log_globs.filter(safePath);
   const findLocks = scan.length
-    ? `find ${scan.map(sh).join(' ')} -maxdepth 6 \\( -name composer.lock -o -name package-lock.json -o -name requirements.txt -o -name 'requirements-*.txt' \\) -type f 2>/dev/null | head -n ${LOCK_MAX}`
+    ? `find ${scan.join(' ')} -maxdepth 6 \\( -name composer.lock -o -name package-lock.json -o -name requirements.txt -o -name 'requirements-*.txt' \\) -type f 2>/dev/null | head -n ${LOCK_MAX}`
     : 'true';
-  // log offsets are templated in so a single round-trip reads only the growth since last time
-  const logBlocks = logs.map((g) => `for f in ${sh(g)}; do [ -f "$f" ] || continue; sz=$(stat -c %s "$f" 2>/dev/null || echo 0); printf '@@LOG %s %s@@\\n' "$f" "$sz"; prev=$(getoff "$f"); if [ "$sz" -lt "$prev" ]; then prev=0; fi; if [ "$sz" -gt "$prev" ]; then tail -c +$((prev+1)) "$f" 2>/dev/null | head -c ${LOG_CHUNK} | base64 | tr -d '\\n'; fi; printf '\\n@@ENDLOG@@\\n'; done`).join('\n');
+  // Rotated .gz files (daily on shared hosting) are decompressed and ingested once each; plain files
+  // are read incrementally from the stored byte offset. Only files modified within LOG_AGE_DAYS are
+  // read, and a per-poll byte budget bounds the work (a shared host may keep ~a year of daily logs).
+  const logBlocks = logs.map((g) => `for f in ${g}; do [ -f "$f" ] || continue; sz=$(_sz "$f"); age=$(( (NOW - $(_mt "$f")) / 86400 )); [ "$age" -gt ${LOG_AGE_DAYS} ] && continue; prev=$(getoff "$f"); printf '@@LOG %s %s@@\\n' "$f" "$sz"; if [ "$TOT" -lt ${LOG_BUDGET} ]; then case "$f" in *.gz) if [ "$prev" -eq 0 ] && [ "$sz" -gt 0 ]; then zcat "$f" 2>/dev/null | head -c ${LOG_CHUNK} | _b64; TOT=$((TOT+sz)); fi ;; *) if [ "$sz" -lt "$prev" ]; then prev=0; fi; if [ "$sz" -gt "$prev" ]; then tail -c +$((prev+1)) "$f" 2>/dev/null | head -c ${LOG_CHUNK} | _b64; TOT=$((TOT+sz-prev)); fi ;; esac; fi; printf '\\n@@ENDLOG@@\\n'; done`).join('\n');
   const offs = Object.entries(t.log_state).filter(([p]) => safePath(p)).map(([p, n]) => `${p}\t${n}`).join('\n');
   return `#!/bin/sh
 set -u
+# Portable helpers (GNU coreutils on AL2023/Ubuntu, BSD tools on FreeBSD/Sakura).
+_sz() { stat -c %s "$1" 2>/dev/null || stat -f %z "$1" 2>/dev/null || echo 0; }
+_mt() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
+_b64() { if command -v base64 >/dev/null 2>&1; then base64; else openssl base64 -A 2>/dev/null; fi | tr -d '\\n'; }
+_shaf() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" 2>/dev/null; else openssl dgst -sha256 "$1" 2>/dev/null; fi | grep -oE '[0-9a-f]{64}' | head -1; }
+_shas() { if command -v sha256sum >/dev/null 2>&1; then sha256sum 2>/dev/null; else openssl dgst -sha256 2>/dev/null; fi | grep -oE '[0-9a-f]{64}' | head -1; }
 getoff() { awk -F'\\t' -v k="$1" '$1==k{print $2; f=1} END{if(!f)print 0}' <<EOF2
 ${offs}
 EOF2
@@ -56,13 +67,14 @@ echo '@@PKG@@'
 if command -v rpm >/dev/null 2>&1; then rpm -qa --qf '%{NAME}\\t%{VERSION}-%{RELEASE}\\n' 2>/dev/null;
 elif command -v dpkg-query >/dev/null 2>&1; then dpkg-query -W -f='\${Package}\\t\${Version}\\n' 2>/dev/null;
 elif command -v apk >/dev/null 2>&1; then apk info -v 2>/dev/null; fi
-echo '@@PORTS@@'; (ss -tlnH 2>/dev/null || netstat -tln 2>/dev/null) | head -n 200
+echo '@@PORTS@@'; (ss -tlnH 2>/dev/null || netstat -an 2>/dev/null | grep -i listen) | head -n 200
 echo '@@HASH@@'
-for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"; do [ -f "$f" ] && sha256sum "$f" 2>/dev/null; done
-crontab -l 2>/dev/null | sha256sum | sed 's#-#crontab#'
+for f in "$HOME/.ssh/authorized_keys" "$HOME/.ssh/known_hosts" "$HOME/.ssh/config"; do [ -f "$f" ] && printf '%s %s\\n' "$(_shaf "$f")" "$f"; done
+cr=$(crontab -l 2>/dev/null | _shas); [ -n "$cr" ] && printf '%s crontab\\n' "$cr"
 echo '@@LOCKS@@'
-${findLocks} | while read -r f; do sz=$(stat -c %s "$f" 2>/dev/null || echo 0); [ "$sz" -gt ${FILE_MAX} ] && continue; printf '@@LOCK %s %s@@\\n' "$f" "$sz"; base64 < "$f" | tr -d '\\n'; printf '\\n@@ENDLOCK@@\\n'; done
+${findLocks} | while read -r f; do sz=$(_sz "$f"); [ "$sz" -gt ${FILE_MAX} ] && continue; printf '@@LOCK %s %s@@\\n' "$f" "$sz"; _b64 < "$f"; printf '\\n@@ENDLOCK@@\\n'; done
 echo '@@LOGS@@'
+NOW=$(date +%s); TOT=0
 ${logBlocks}
 echo '@@DONE@@'
 `;
@@ -72,7 +84,9 @@ function runRemote(t: PullTarget, script: string, timeoutMs = 180_000): Promise<
   return new Promise((resolve) => {
     const dir = mkdtempSync(join(tmpdir(), 'minisoc2-pull-'));
     const known = join(dir, 'known_hosts');
-    const opts = ['-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=accept-new', '-o', `UserKnownHostsFile=${known}`,
+    // BatchMode=yes is only for key auth (it disables the password/keyboard-interactive prompt that
+    // sshpass answers, so it must NOT be set for password auth).
+    const opts = ['-o', 'StrictHostKeyChecking=accept-new', '-o', `UserKnownHostsFile=${known}`,
       '-o', 'ConnectTimeout=20', '-o', 'ServerAliveInterval=10', '-p', String(t.ssh_port)];
     let cmd = 'ssh';
     let args: string[];
@@ -80,7 +94,7 @@ function runRemote(t: PullTarget, script: string, timeoutMs = 180_000): Promise<
     if (t.auth === 'key') {
       const key = join(dir, 'id');
       writeFileSync(key, decrypt(t.secret_enc).replace(/\s+$/, '') + '\n', { mode: 0o600 });
-      args = [...opts, '-o', 'IdentitiesOnly=yes', '-i', key, `${t.ssh_user}@${t.ssh_host}`, 'sh', '-s'];
+      args = [...opts, '-o', 'BatchMode=yes', '-o', 'IdentitiesOnly=yes', '-i', key, `${t.ssh_user}@${t.ssh_host}`, 'sh', '-s'];
     } else {
       cmd = 'sshpass';
       env.SSHPASS = decrypt(t.secret_enc);
@@ -102,12 +116,16 @@ function runRemote(t: PullTarget, script: string, timeoutMs = 180_000): Promise<
 }
 
 // ---- parsing ----
+// Only the top-level section headers terminate a section. The LOCKS/LOGS payloads contain their own
+// @@LOCK …@@ / @@ENDLOCK@@ (and @@LOG …@@ / @@ENDLOG@@) markers, which must NOT be treated as the
+// next section, or the section would be cut off at its first block.
+const SECTION_RE = /@@(?:OSREL|RUNTIME|PKG|PORTS|HASH|LOCKS|LOGS|DONE)@@/;
 function section(out: string, name: string): string {
   const start = out.indexOf(`@@${name}@@`);
   if (start < 0) return '';
   const from = start + name.length + 4;
   const rest = out.slice(from);
-  const next = rest.search(/@@[A-Z]+@@/);
+  const next = rest.search(SECTION_RE);
   return (next < 0 ? rest : rest.slice(0, next)).replace(/^\n/, '');
 }
 
