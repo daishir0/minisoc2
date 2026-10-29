@@ -32,7 +32,7 @@ export default async function Home() {
   const steps = [
     { done: mail.enabled, label: 'メール通知を設定する', href: '/settings' },
     { done: Number(t.hosts) > 0, label: '最初のホストを追加する', href: '/enroll' },
-    { done: Number(t.exposed) > 0, label: '外部に公開しているシステムの「公開区分」を設定する', href: '/systems' },
+    { done: Number(t.exposed) > 0, label: '外部に公開しているシステムの「公開区分」を設定する', href: '/hosts' },
   ];
   const showOnboarding = !onboarding.dismissed && steps.some((s) => !s.done);
   const nKev = Number(t.kev), nCrit = Number(t.critical), nStale = Number(t.stale);

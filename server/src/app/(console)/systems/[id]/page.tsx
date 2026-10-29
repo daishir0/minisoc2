@@ -50,7 +50,7 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
 
   return (
     <>
-      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, CRUMB.projects, { label: s.host, href: `/hosts/${s.host_id}` }, { label: s.name }]} />
+      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, { label: s.host, href: `/hosts/${s.host_id}` }, { label: s.name }]} />
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">{s.name}</h1>
         {s.ignored && <span className="rounded bg-slate-500 px-2 py-0.5 text-xs text-white">除外中</span>}
@@ -61,7 +61,7 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
           保存しました。登録済みプロジェクトとして評価対象になります（次回の照合から反映）。
           <div className="mt-1 flex gap-3">
             <Link href={`/hosts/${s.host_id}`} className="text-accent">← {s.host} に戻る（他の候補を登録）</Link>
-            <Link href="/systems" className="text-accent">プロジェクト一覧へ</Link>
+            <Link href="/hosts" className="text-accent">資産（ホスト一覧）へ</Link>
           </div>
         </div>
       )}

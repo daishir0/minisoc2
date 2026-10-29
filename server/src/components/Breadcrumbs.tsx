@@ -19,7 +19,7 @@ export const CRUMB = {
   home: { label: 'ホーム', href: '/' },
   assets: { label: '資産', href: '/hosts' },
   hosts: { label: 'ホスト', href: '/hosts' },
-  projects: { label: 'プロジェクト', href: '/systems' },
+  projects: { label: 'プロジェクト', href: '/hosts' },
   detect: { label: '検知', href: '/findings' },
   findings: { label: '脆弱性', href: '/findings' },
   logs: { label: 'ログ脅威', href: '/logs' },
