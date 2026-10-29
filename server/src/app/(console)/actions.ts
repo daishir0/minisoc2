@@ -328,6 +328,21 @@ export async function saveSystem(fd: FormData): Promise<void> {
   redirect(`/systems/${sysId}?saved=1`);
 }
 
+// Remove a project from monitoring: revert it to an auto-detected candidate (keeps its settings
+// such as excludes/exposure, but it is no longer evaluated). Its open findings resolve on re-match.
+export async function unregisterSystem(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = Number(fd.get('id'));
+  const r = await q<{ host_id: string; name: string }>("UPDATE systems SET origin='auto', baselined=true WHERE id=$1 AND origin='manual' AND root <> '__os__' RETURNING host_id, name", [id]);
+  if (r[0]) {
+    await q('UPDATE hosts SET needs_match=true WHERE id=$1', [r[0].host_id]);
+    await opsEvent(`プロジェクト「${r[0].name}」を監視対象から外す（登録解除）`, r[0].host_id);
+    revalidatePath('/hosts');
+    revalidatePath(`/hosts/${r[0].host_id}`);
+    redirect(`/hosts/${r[0].host_id}`);
+  }
+}
+
 export async function deleteSystem(fd: FormData): Promise<void> {
   await requireUser();
   const id = Number(fd.get('id'));

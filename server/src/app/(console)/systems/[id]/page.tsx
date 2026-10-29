@@ -4,7 +4,8 @@ import { Card, Kev, Sev, ago, vulnLink } from '@/components/ui';
 import { q, q1 } from '@/lib/db';
 import { STACK_KEYS, detectStack } from '@/lib/systemmeta';
 import { taskKey } from '@/lib/tasks';
-import { addExclude, deleteSystem, removeExclude } from '../../actions';
+import { addExclude, removeExclude, unregisterSystem } from '../../actions';
+import { PendingButton } from '@/components/PendingButton';
 import { SystemForm } from '../SystemForm';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { RemediationPicker } from '@/components/RemediationPicker';
@@ -131,9 +132,9 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
             </div>
           </Card>
           {s.origin === 'manual' && s.root !== '__os__' && (
-            <Card title="登録の削除">
-              <p className="mb-2 text-xs text-muted">削除すると、次回の報告から自動検出の区切りに戻ります。</p>
-              <form action={deleteSystem}><input type="hidden" name="id" value={s.id} /><button className="btn-ghost text-red-600">このシステムの登録を削除</button></form>
+            <Card title="監視対象から外す">
+              <p className="mb-2 text-xs text-muted">登録を解除すると<b>評価の対象外</b>になり、未対応の脆弱性は次回の照合で解消扱いになります。設定（除外パスなど）は保持され、<b>未登録の候補</b>に戻ります（再登録で元に戻せます）。</p>
+              <form action={unregisterSystem}><input type="hidden" name="id" value={s.id} /><PendingButton className="btn-ghost text-red-600" pendingText="解除中…">監視対象から外す（登録解除）</PendingButton></form>
             </Card>
           )}
         </div>
