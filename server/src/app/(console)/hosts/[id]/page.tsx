@@ -59,6 +59,11 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           </dl>
         </Card>
         <Card title="未対応の脆弱性">
+          {registered.length === 0 && candidates.length > 0 && (
+            <div className="mb-3 rounded-md border border-orange-400 bg-orange-50 px-3 py-2 text-xs text-orange-900 dark:bg-orange-950 dark:text-orange-100">
+              ⚠ 評価は<b>登録済みプロジェクトだけ</b>に行います。このホストは未登録の候補が{candidates.length}件あり、<b>まだ評価されていません</b>。下の「プロジェクト」から登録すると、依存パッケージの脆弱性がここに表示されます。
+            </div>
+          )}
           <div className="flex flex-wrap gap-4 text-sm">
             <Link href={`/findings?host=${h.id}&kev=1`} className={kevN ? 'font-semibold text-red-600' : ''}>KEV {kevN}</Link>
             <Link href={`/findings?host=${h.id}&severity=critical`} className="flex items-center gap-1"><Sev s="critical" /> {by.critical ?? 0}</Link>
