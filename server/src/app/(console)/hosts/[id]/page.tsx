@@ -3,16 +3,20 @@ import { notFound } from 'next/navigation';
 import { Card, Sev, ago } from '@/components/ui';
 import { q, q1 } from '@/lib/db';
 import type { HostState } from '@/lib/payload';
-import { hostAction } from '../../actions';
+import { hostAction, pollPullNow } from '../../actions';
 
 export default async function HostPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   if (!/^[0-9a-f-]{36}$/.test(id)) notFound();
   const h = await q1<{
     id: string; name: string; hostname: string; platform: string; os_name: string; os_version: string; kernel: string; arch: string;
-    agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[]; allowed_ips: string[]; file_baseline_at: Date | null;
+    agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[]; allowed_ips: string[]; file_baseline_at: Date | null; kind: string;
   }>('SELECT * FROM hosts WHERE id=$1', [id]);
   if (!h) notFound();
+  const pull = h.kind === 'pull'
+    ? await q1<{ ssh_host: string; ssh_port: number; ssh_user: string; auth: string; every_hours: number; last_poll_at: Date | null; last_error: string | null }>(
+      'SELECT ssh_host, ssh_port, ssh_user, auth, every_hours, last_poll_at, last_error FROM pull_targets WHERE host_id=$1', [id])
+    : null;
   const fileBase = Number((await q<{ n: string }>('SELECT count(*) AS n FROM host_file_baseline WHERE host_id=$1', [id]))[0].n);
   const fileChanges = await q<{ created_at: Date; important: boolean; title: string }>(
     "SELECT created_at, important, title FROM change_events WHERE host_id=$1 AND kind='host_state' AND title LIKE '%監視ファイル%' ORDER BY created_at DESC LIMIT 8", [id]);
@@ -37,6 +41,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       <div className="text-sm text-muted"><Link href="/hosts" className="text-accent">資産</Link> › ホスト › {h.name}</div>
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">{h.name}</h1>
+        {h.kind === 'pull' && <span className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white">プル型（SSH）</span>}
         {h.disabled && <span className="rounded bg-slate-500 px-2 py-0.5 text-xs text-white">無効</span>}
         <Link className="btn-ghost ml-auto" href={`/findings?host=${h.id}`}>未対応の脆弱性</Link>
       </div>
@@ -121,6 +126,17 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           </ul>
         ) : <p className="text-sm text-muted">候補はありません。</p>}
       </Card>
+      {pull && (
+        <Card title="プル型収集（読み取り専用SSH）">
+          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+            <dt className="text-muted">接続先</dt><dd className="font-mono">{pull.ssh_user}@{pull.ssh_host}:{pull.ssh_port}（{pull.auth === 'key' ? '鍵' : 'パスワード'}）</dd>
+            <dt className="text-muted">収集間隔</dt><dd>{pull.every_hours} 時間ごと</dd>
+            <dt className="text-muted">最終収集</dt><dd>{ago(pull.last_poll_at)}</dd>
+            {pull.last_error && <><dt className="text-red-600">エラー</dt><dd className="break-all text-red-600">{pull.last_error}</dd></>}
+          </dl>
+          <form action={pollPullNow} className="mt-3"><input type="hidden" name="id" value={h.id} /><button className="btn-ghost">今すぐ収集</button></form>
+        </Card>
+      )}
       <Card title="ファイル改ざん検知（AIDE相当）">
         {fileBase === 0 ? (
           <p className="text-sm text-muted">まだベースラインがありません。エージェント 0.1.0 以降が有効なら、次回の報告で確定します（設定で <code>--aide off</code> なら無効）。</p>

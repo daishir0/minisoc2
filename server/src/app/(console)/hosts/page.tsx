@@ -18,6 +18,10 @@ export default async function HostsPage() {
   return (
     <>
       <AssetTabs />
+      <div className="flex flex-wrap gap-2 text-sm">
+        <Link className="btn-ghost" href="/enroll">エージェント型ホストを追加</Link>
+        <Link className="btn-ghost" href="/hosts/pull/new">プル型ホストを追加（SSH）</Link>
+      </div>
     <Card title={`ホスト（${hosts.length}台）`}>
       {hosts.length === 0 ? <p className="text-sm text-muted">ホストはまだありません。<Link className="text-accent" href="/enroll">最初のホストを追加</Link>してください。</p> : (
         <>

@@ -2,8 +2,10 @@
 
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
+import { randomUUID } from 'node:crypto';
 import { disableTotp, enableTotp, getTotp, requireUser, startTotpSecret } from '@/lib/auth';
 import { verifyTotp } from '@/lib/totp';
+import { pollPull, safePath } from '@/lib/pullssh';
 import { recordEvent } from '@/lib/events';
 import { q } from '@/lib/db';
 import { sendMail } from '@/lib/mail';
@@ -84,6 +86,46 @@ export async function savePolicy(_: Result, fd: FormData): Promise<Result> {
   revalidatePath('/settings');
   const bad = parseAllowList(String(fd.get('defaultAllowedIps') ?? '')).bad;
   return { ok: bad.length ? `保存しました。無効な許可IPは無視しました：${bad.slice(0, 5).join(', ')}` : '保存しました。' };
+}
+
+// --- Pull-type (read-only SSH) hosts ---
+export async function addPullHost(_: Result, fd: FormData): Promise<Result> {
+  await requireUser();
+  const str = (k: string, max = 300) => String(fd.get(k) ?? '').trim().slice(0, max);
+  const name = str('name', 200) || str('sshHost', 200);
+  const sshHost = str('sshHost', 200);
+  const sshUser = str('sshUser', 64);
+  const port = Math.min(65535, Math.max(1, Number(fd.get('sshPort') ?? 22) || 22));
+  const auth = str('auth') === 'password' ? 'password' : 'key';
+  const secret = String(fd.get('secret') ?? '');
+  const lines = (k: string) => String(fd.get(k) ?? '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean).slice(0, 100);
+  const scanPaths = lines('scanPaths');
+  const logGlobs = lines('logGlobs');
+  if (!sshHost || !sshUser || !secret) return { error: 'SSHホスト・ユーザー・鍵またはパスワードは必須です。' };
+  for (const p of [...scanPaths, ...logGlobs]) if (!safePath(p)) return { error: `使用できない文字を含むパスがあります：${p}` };
+  const id = randomUUID();
+  await q("INSERT INTO hosts(id, name, hostname, token_hash, kind, platform, os_id) VALUES ($1,$2,$3,$4,'pull','linux','')", [id, name, sshHost, sha256hex(randomToken())]);
+  await q(
+    `INSERT INTO pull_targets(host_id, ssh_host, ssh_port, ssh_user, auth, secret_enc, scan_paths, log_globs)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+    [id, sshHost, port, sshUser, auth, encryptPassword(secret), scanPaths, logGlobs],
+  );
+  await opsEvent(`プル型ホスト「${name}」を登録（${sshUser}@${sshHost}）`, id);
+  try {
+    await pollPull(id); // initial connection test + first collection; errors are stored on the target
+  } catch {
+    /* shown as last_error on the host page */
+  }
+  redirect(`/hosts/${id}`);
+}
+
+export async function pollPullNow(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = String(fd.get('id'));
+  if (!/^[0-9a-f-]{36}$/.test(id)) return;
+  const r = await pollPull(id);
+  await opsEvent(`プル型ホストを即時収集：${r.ok ? `パッケージ${r.packages}・ログ${r.logs}行` : `失敗（${r.error}）`}`, id);
+  revalidatePath(`/hosts/${id}`);
 }
 
 // --- Admin two-factor (TOTP) ---

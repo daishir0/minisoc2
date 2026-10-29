@@ -7,6 +7,7 @@ import { migrate } from './migrate';
 import { statfs } from 'node:fs/promises';
 import { syncKev } from '../src/lib/feeds';
 import { syncSigma } from '../src/lib/sigma';
+import { pollPull } from '../src/lib/pullssh';
 import { dropOldPartitions, ensurePartition } from '../src/lib/logs';
 import { matchHost } from '../src/lib/match';
 import { recordEvent } from '../src/lib/events';
@@ -48,6 +49,21 @@ async function feeds() {
       if (await raiseAlert({ kind: 'feed', severity: 'high', title: `脆弱性フィード「${f.name}」が48時間以上更新されていません`, detail: f.last_error ?? '', dedupeKey: `feed:${f.name}:${day}` })) {
         await recordEvent({ kind: 'health', important: true, title: `脆弱性フィード「${f.name}」が48時間以上更新されていません` });
       }
+    }
+  }
+}
+
+async function pollPullHosts() {
+  const due = await q<{ host_id: string; name: string }>(
+    `SELECT t.host_id, h.name FROM pull_targets t JOIN hosts h ON h.id=t.host_id
+     WHERE NOT h.disabled AND (t.last_poll_at IS NULL OR t.last_poll_at < now() - (t.every_hours || ' hours')::interval)`,
+  );
+  for (const d of due) {
+    try {
+      const r = await pollPull(d.host_id);
+      log(`pull ${d.name}: ${r.ok ? `packages=${r.packages} logs=${r.logs}` : `failed: ${r.error}`}`);
+    } catch (e) {
+      log(`pull ${d.name} failed: ${errMsg(e)}`);
     }
   }
 }
@@ -180,6 +196,7 @@ async function tick(n: number) {
     ['staleHosts', staleHosts, 5],
     ['feeds', feeds, 10],
     ['sigmaSync', sigmaSync, 60],
+    ['pollPullHosts', pollPullHosts, 5],
     ['dailyRematch', dailyRematch, 10],
     ['notify', async () => {
       const r = await notifyPending(PUBLIC_URL);
