@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { Card, Sev, ago } from '@/components/ui';
+import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q, q1 } from '@/lib/db';
 import type { HostState } from '@/lib/payload';
 import { hostAction, pollPullNow, savePullAide } from '../../actions';
@@ -23,9 +24,13 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   const fileChanges = await q<{ created_at: Date; important: boolean; title: string }>(
     "SELECT ts AS created_at, important, title FROM change_events WHERE host_id=$1 AND kind='host_state' AND title LIKE '%監視ファイル%' ORDER BY ts DESC LIMIT 8", [id]);
   // Projects on this host: registered (manual) are evaluated; auto-detected are approval candidates.
-  const projects = await q<{ id: number; root: string; name: string; origin: string; exposure: string; ignored: boolean; pkgs: string }>(
-    `SELECT s.id, s.root, s.name, s.origin, s.exposure, s.ignored,
-       (SELECT count(*) FROM host_packages p WHERE p.host_id=s.host_id AND s.root = ANY(p.systems)) AS pkgs
+  const projects = await q<{ id: number; root: string; name: string; origin: string; exposure: string; criticality: string; stack: string; ignored: boolean; pkgs: string; k: string; c: string; hi: string; total: string }>(
+    `SELECT s.id, s.root, s.name, s.origin, s.exposure, s.criticality, s.stack, s.ignored,
+       (SELECT count(*) FROM host_packages p WHERE p.host_id=s.host_id AND s.root = ANY(p.systems)) AS pkgs,
+       (SELECT count(*) FROM findings f WHERE f.host_id=s.host_id AND f.status='open' AND s.root = ANY(f.systems) AND f.kev) AS k,
+       (SELECT count(*) FROM findings f WHERE f.host_id=s.host_id AND f.status='open' AND s.root = ANY(f.systems) AND NOT f.kev AND f.severity='critical') AS c,
+       (SELECT count(*) FROM findings f WHERE f.host_id=s.host_id AND f.status='open' AND s.root = ANY(f.systems) AND NOT f.kev AND f.severity='high') AS hi,
+       (SELECT count(*) FROM findings f WHERE f.host_id=s.host_id AND f.status='open' AND s.root = ANY(f.systems)) AS total
      FROM systems s WHERE s.host_id=$1 AND s.root <> '__os__' ORDER BY (s.origin='manual') DESC, s.name`, [id]);
   const registered = projects.filter((p) => p.origin === 'manual');
   const candidates = projects.filter((p) => p.origin !== 'manual');
@@ -119,11 +124,22 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
         {registered.length ? (
           <ul className="mb-4 divide-y divide-border text-sm">
             {registered.map((p) => (
-              <li key={p.id} className="flex flex-wrap items-center gap-2 py-1.5">
-                <Link href={`/systems/${p.id}`} className="font-medium text-accent">{p.name}</Link>
-                {p.ignored && <span className="rounded bg-slate-500 px-1.5 text-xs text-white">除外中</span>}
-                <span className="font-mono text-xs text-muted">{p.root}</span>
-                <span className="ml-auto text-xs text-muted">{p.pkgs} パッケージ</span>
+              <li key={p.id} className="flex flex-col gap-1 py-1.5 sm:flex-row sm:items-center sm:gap-2">
+                <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+                  <Link href={`/systems/${p.id}`} className="font-medium text-accent">{p.name}</Link>
+                  {p.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}
+                  {p.exposure !== 'public' && p.exposure !== 'unknown' && <span className="rounded bg-bg px-1.5 text-[11px] text-muted">{EXPOSURE[p.exposure]}</span>}
+                  {p.criticality !== 'normal' && <span className="rounded bg-bg px-1.5 text-[11px] text-muted">{CRITICALITY[p.criticality]}</span>}
+                  {p.stack && <span className="rounded bg-bg px-1.5 text-[11px] text-muted">{p.stack}</span>}
+                  {p.ignored && <span className="rounded bg-slate-500 px-1.5 text-[11px] text-white">除外中</span>}
+                  <span className="hidden font-mono text-xs text-muted md:inline">{p.root}</span>
+                </span>
+                <span className="ml-auto flex shrink-0 items-center gap-3 text-xs">
+                  <span className="text-muted">pkg {p.pkgs}</span>
+                  <span className={Number(p.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {p.k}</span>
+                  <span className={Number(p.c) ? 'text-orange-600' : 'text-muted'}>緊急 {p.c}</span>
+                  <span className={Number(p.hi) ? 'text-yellow-600' : 'text-muted'}>高 {p.hi}</span>
+                </span>
               </li>
             ))}
           </ul>
