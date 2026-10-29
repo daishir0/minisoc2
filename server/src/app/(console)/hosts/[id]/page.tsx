@@ -80,15 +80,18 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
             <input className="input" name="name" defaultValue={h.name} /><button className="btn-ghost">名前を変更</button>
           </form>
           <div className="mt-3 flex flex-wrap gap-2">
-            <form action={hostAction}><input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="rematch" /><button className="btn-ghost">今すぐ再照合</button></form>
-            <form action={hostAction}><input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value={h.disabled ? 'enable' : 'disable'} /><button className="btn-ghost">{h.disabled ? '有効にする' : '無効にする（報告を拒否）'}</button></form>
+            <form action={hostAction}><input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="rematch" /><PendingButton className="btn-ghost" pendingText="再照合中…" >今すぐ再照合</PendingButton></form>
+            <form action={hostAction}><input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value={h.disabled ? 'enable' : 'disable'} /><button className="btn-ghost">{h.disabled ? '有効にする' : (pull ? '無効にする（収集を停止）' : '無効にする（報告を拒否）')}</button></form>
           </div>
-          <form action={hostAction} className="mt-3 space-y-1">
-            <input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="allowips" />
-            <span className="block text-xs text-muted">許可する接続元IP（空欄=制限なし。設定すると既定より優先。例 203.0.113.0/24、改行区切り）</span>
-            <textarea className="input font-mono text-xs" name="allowedIps" rows={2} defaultValue={(h.allowed_ips ?? []).join('\n')} placeholder="203.0.113.0/24" />
-            <button className="btn-ghost">許可IPを保存</button>
-          </form>
+          <p className="mt-1 text-xs text-muted">「今すぐ再照合」＝取得済みのインベントリを使って脆弱性を今すぐ再判定します（新しく公表されたCVEや設定変更の反映に使います。ホストへは接続しません）。「無効にする」＝{pull ? 'このホストの定期収集を止めます' : 'このホストからのAPI報告を拒否します'}。</p>
+          {!pull && (
+            <form action={hostAction} className="mt-3 space-y-1">
+              <input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="allowips" />
+              <span className="block text-xs text-muted">許可する接続元IP（エージェント型のみ）。<b>エージェントを配置したホストのIP</b>を入れると、そのIPからのAPI報告だけを受け付けます。空欄=制限なし。設定すると全体の既定より優先。CIDR可（例 203.0.113.0/24）、改行区切り。</span>
+              <textarea className="input font-mono text-xs" name="allowedIps" rows={2} defaultValue={(h.allowed_ips ?? []).join('\n')} placeholder="203.0.113.0/24" />
+              <PendingButton className="btn-ghost" pendingText="保存中…">許可IPを保存</PendingButton>
+            </form>
+          )}
           <form action={hostAction} className="mt-3 flex gap-2">
             <input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="delete" />
             <input className="input" name="confirm" placeholder='確認のため delete と入力' /><button className="btn-ghost text-red-600">ホストを削除</button>
@@ -134,14 +137,17 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
         ) : <p className="text-sm text-muted">候補はありません。</p>}
       </Card>
       {pull && (
-        <Card title="プル型収集（読み取り専用SSH）">
+        <Card title="SSH接続の状態（プル型）">
+          <p className="mb-2 text-xs text-muted">
+            このホストはエージェントを置けないため、サーバーから<b>読み取り専用SSH</b>で定期的に収集しています。ここは<b>接続先と最終結果</b>の確認用です（収集の手動実行は上の「プロジェクト」欄の「🔄 再スキャン」から）。
+          </p>
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
             <dt className="text-muted">接続先</dt><dd className="font-mono">{pull.ssh_user}@{pull.ssh_host}:{pull.ssh_port}（{pull.auth === 'key' ? '鍵' : 'パスワード'}）</dd>
             <dt className="text-muted">収集間隔</dt><dd>{pull.every_hours} 時間ごと</dd>
             <dt className="text-muted">最終収集</dt><dd>{ago(pull.last_poll_at)}</dd>
-            {pull.last_error && <><dt className="text-red-600">エラー</dt><dd className="break-all text-red-600">{pull.last_error}</dd></>}
+            <dt className="text-muted">状態</dt><dd>{pull.last_error ? <span className="text-red-600">エラー</span> : <span className="text-green-600">正常</span>}</dd>
+            {pull.last_error && <><dt className="text-red-600">詳細</dt><dd className="break-all text-red-600">{pull.last_error}</dd></>}
           </dl>
-          <form action={pollPullNow} className="mt-3"><input type="hidden" name="id" value={h.id} /><PendingButton className="btn-ghost" pendingText="収集中…（十数秒）">今すぐ収集</PendingButton></form>
         </Card>
       )}
       <Card title="ファイル改ざん検知（AIDE相当）">
@@ -169,7 +175,9 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
         )}
       </Card>
       <div className="grid gap-6 lg:grid-cols-2">
+        {!pull && (
         <Card title={`待受ポート（${ports.length}）`}>
+          <p className="mb-2 text-xs text-muted">このホストで外部からの接続を待ち受けているポートです。身に覚えのないポートは侵入やバックドアの兆候になります。</p>
           <div className="max-h-72 overflow-y-auto">
             <table className="tbl"><thead><tr><th>プロトコル</th><th>アドレス</th><th>ポート</th></tr></thead><tbody>
               {ports.map((p) => <tr key={`${p.proto}${p.addr}${p.port}`}><td>{p.proto}</td><td className="font-mono text-xs">{p.addr}</td><td>{p.port}</td></tr>)}
@@ -177,7 +185,8 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           </div>
           <p className="mt-2 text-xs text-muted">ログイン可能なアカウント： {(h.state.users ?? []).join(', ') || '-'}</p>
         </Card>
-        <Card title="直近の報告">
+        )}
+        <Card title={pull ? '収集の履歴' : '直近の報告'}>
           <table className="tbl"><thead><tr><th>日時</th><th>エージェント</th><th>パッケージ</th><th>OS修正</th><th>所要</th><th>問題</th></tr></thead><tbody>
             {reports.map((r) => (
               <tr key={String(r.received_at)}>
