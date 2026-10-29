@@ -7,6 +7,7 @@ import { taskKey } from '@/lib/tasks';
 import { addExclude, deleteSystem, removeExclude } from '../../actions';
 import { SystemForm } from '../SystemForm';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
+import { RemediationPicker } from '@/components/RemediationPicker';
 
 export default async function SystemPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ saved?: string }> }) {
   const { id } = await params;
@@ -47,6 +48,14 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
   const osRow = osPkgs.length ? await cnt("source='os-advisory' AND (pkg = ANY($2) OR EXISTS (SELECT 1 FROM unnest($2::text[]) o WHERE pkg LIKE o || '-%'))", [osPkgs]) : { kev: '0', crit: '0' };
   const wideRow = await cnt("source='os-advisory' AND pkg ~ '^(kernel|glibc|openssl|systemd|zlib|sudo|openssh)'", []);
   const total = await q1<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='open' AND $2 = ANY(systems)", [s.host_id, s.root]);
+  // open findings of this project + the host address, for the Claude Code remediation prompt picker
+  const picks = await q<{ id: string; vuln_id: string; pkg: string; version: string; fixed: string; severity: string; kev: boolean }>(
+    `SELECT id, vuln_id, pkg, version, fixed, severity, kev FROM findings WHERE host_id=$1 AND status='open' AND $2 = ANY(systems)
+     ORDER BY kev DESC, CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 300`,
+    [s.host_id, s.root]);
+  const hinfo = await q1<{ hostname: string; kind: string; ssh_host: string | null }>(
+    'SELECT h.hostname, h.kind, pt.ssh_host FROM hosts h LEFT JOIN pull_targets pt ON pt.host_id=h.id WHERE h.id=$1', [s.host_id]);
+  const address = hinfo?.kind === 'pull' ? (hinfo.ssh_host ?? '') : (hinfo?.hostname ?? '');
 
   return (
     <>
@@ -87,6 +96,16 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
             ))}
           </ul>
           <p className="mt-2 text-xs text-muted">稼働中のサービス：{services.length ? services.map((x) => x.name.replace(/\.service$/, '')).join('、') : '見つかりません（サービスとして動いていないか、エージェントが 0.7.0 未満です）'}</p>
+        </Card>
+      )}
+
+      {s.root !== '__os__' && picks.length > 0 && (
+        <Card title="Claude Code で解消（CVEを選んでプロンプト生成）">
+          <p className="mb-3 text-sm text-muted">
+            解消したいCVEにチェックを入れると、<b>対象ホスト上で <code>claude</code>（Claude Code）に貼り付けて実行できる</b>、バックアップ前提の安全なアップグレード提案プロンプトを生成します。内容を確認のうえ対象ホストで実行してください（minisoc2 がサーバーから実行することはありません）。
+          </p>
+          <RemediationPicker host={s.host} address={address} path={s.root} system={s.name}
+            findings={picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev }))} />
         </Card>
       )}
 
