@@ -17,7 +17,7 @@ export default async function Home() {
             (SELECT count(*) FROM hosts WHERE NOT disabled) AS hosts,
             (SELECT count(*) FROM systems WHERE exposure <> 'unknown') AS exposed,
             (SELECT count(*) FROM alerts WHERE kind='log' AND status='open' AND created_at > now() - interval '24 hours') AS logthreat,
-            (SELECT count(*) FROM change_events WHERE kind='host_state' AND important AND title LIKE '%監視ファイル%' AND created_at > now() - interval '7 days') AS filechange`,
+            (SELECT count(*) FROM change_events WHERE kind='host_state' AND important AND title LIKE '%監視ファイル%' AND ts > now() - interval '7 days') AS filechange`,
   );
   const tasks = (await listTasks()).filter((x) => x.status !== 'hold' || x.overdue);
   const det = await openDetections(5);

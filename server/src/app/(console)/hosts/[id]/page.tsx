@@ -19,7 +19,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
     : null;
   const fileBase = Number((await q<{ n: string }>('SELECT count(*) AS n FROM host_file_baseline WHERE host_id=$1', [id]))[0].n);
   const fileChanges = await q<{ created_at: Date; important: boolean; title: string }>(
-    "SELECT created_at, important, title FROM change_events WHERE host_id=$1 AND kind='host_state' AND title LIKE '%監視ファイル%' ORDER BY created_at DESC LIMIT 8", [id]);
+    "SELECT ts AS created_at, important, title FROM change_events WHERE host_id=$1 AND kind='host_state' AND title LIKE '%監視ファイル%' ORDER BY ts DESC LIMIT 8", [id]);
   // Projects on this host: registered (manual) are evaluated; auto-detected are approval candidates.
   const projects = await q<{ id: number; root: string; name: string; origin: string; exposure: string; ignored: boolean; pkgs: string }>(
     `SELECT s.id, s.root, s.name, s.origin, s.exposure, s.ignored,

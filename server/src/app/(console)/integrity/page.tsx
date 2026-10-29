@@ -8,19 +8,19 @@ export default async function IntegrityPage() {
   const hosts = await q<{ id: string; name: string; kind: string; baseline_at: Date | null; files: string; last_change: Date | null; important: boolean | null }>(
     `SELECT h.id, h.name, h.kind, h.file_baseline_at AS baseline_at,
        (SELECT count(*) FROM host_file_baseline b WHERE b.host_id=h.id) AS files,
-       ce.created_at AS last_change, ce.important
+       ce.last_change, ce.important
      FROM hosts h
      LEFT JOIN LATERAL (
-       SELECT created_at, important FROM change_events e
+       SELECT ts AS last_change, important FROM change_events e
        WHERE e.host_id=h.id AND e.kind='host_state' AND e.title LIKE '%監視ファイル%'
-       ORDER BY created_at DESC LIMIT 1
+       ORDER BY ts DESC LIMIT 1
      ) ce ON true
      WHERE NOT h.disabled ORDER BY h.name`,
   );
   const changes = await q<{ host: string; host_id: string; created_at: Date; important: boolean; title: string }>(
-    `SELECT h.name AS host, e.host_id, e.created_at, e.important, e.title
+    `SELECT h.name AS host, e.host_id, e.ts AS created_at, e.important, e.title
      FROM change_events e JOIN hosts h ON h.id=e.host_id
-     WHERE e.kind='host_state' AND e.title LIKE '%監視ファイル%' ORDER BY e.created_at DESC LIMIT 40`,
+     WHERE e.kind='host_state' AND e.title LIKE '%監視ファイル%' ORDER BY e.ts DESC LIMIT 40`,
   );
   const tracked = hosts.reduce((s, h) => s + Number(h.files), 0);
 
