@@ -6,6 +6,7 @@ import { markFeed } from './feeds';
 import { q, q1 } from './db';
 import { atLeast, cvss3Score, fromScore, normalizeLabel, sevRank, type Severity } from './severity';
 import { getPolicy } from './settings';
+import { OS_SYSTEM } from './systems';
 
 const OSV = 'https://api.osv.dev/v1';
 const nul = (x: string) => x.replace(/\u0000/g, '').replace(/\\u0000/g, ''); // Postgres text/jsonb reject NUL
@@ -146,8 +147,13 @@ async function candidates(hostId: string): Promise<Map<string, Candidate>> {
   const out = new Map<string, Candidate>();
   // packages that only appear in systems marked "ignored" produce no findings
   const ignored = new Set((await q<{ root: string }>('SELECT root FROM systems WHERE host_id=$1 AND ignored', [hostId])).map((r) => r.root));
+  // Only registered (manually confirmed) projects are evaluated. Auto-detected projects are shown
+  // as candidates for approval and produce no findings until registered. OS packages ('__os__')
+  // are host-level and always evaluated, since the host itself is registered.
+  const registered = new Set((await q<{ root: string }>("SELECT root FROM systems WHERE host_id=$1 AND origin='manual'", [hostId])).map((r) => r.root));
+  const evaluated = (x: string) => x === OS_SYSTEM || (registered.has(x) && !ignored.has(x));
   const add = (c: Omit<Candidate, 'versions' | 'fixed' | 'systems' | 'cvss'> & { version: string; fixed: string[]; systems: string[]; cvss?: number | null }) => {
-    const systems = c.systems.filter((x) => !ignored.has(x));
+    const systems = c.systems.filter(evaluated);
     if (c.systems.length && !systems.length) return;
     const k = `${c.vulnId}\u0000${c.ecosystem}\u0000${c.pkg}`;
     const e = out.get(k) ?? { ...c, cvss: c.cvss ?? null, versions: new Set<string>(), fixed: new Set<string>(), systems: new Set<string>() };

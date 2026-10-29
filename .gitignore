@@ -1,23 +1,28 @@
+# build artifacts (match anywhere)
 node_modules/
 .next/
 out/
-agent/dist/
-server/data/
-server/test-results/
-server/playwright-report/
 *.tsbuildinfo
 next-env.d.ts
 
-# secrets and host-specific files (never commit)
+# build outputs (root only)
+/agent/dist/
+/server/data/
+/server/test-results/
+/server/playwright-report/
+
+# secrets (never commit, match anywhere)
 .env
 .env*.local
 *.pem
 *.key
-infrastructure/
-memo.md
-CLAUDE.md
-CLAUDE.local.md
-.claude/
-logs/
-outputs/
 .DS_Store
+
+# host-specific working dirs/files (root only — must not match app routes like src/app/.../logs)
+/infrastructure/
+/logs/
+/outputs/
+/memo.md
+/CLAUDE.md
+/CLAUDE.local.md
+/.claude/
