@@ -1,9 +1,9 @@
 # minisoc2
 
-> **Status: under active development.** minisoc2 is the next generation of minisoc, rebuilt as an AI-era defense system for **Linux servers only** (Amazon Linux 2023, Ubuntu, and other RPM/dpkg/apk distros). Headline features being added on top of the inherited SBOM/CVE/log baseline: server-side AIDE-style file-integrity detection, Sigma log threat detection, pull-type (read-only SSH) host registration for agent-less hosts, TOTP 2FA, per-host allowed-IP lists, and copy-paste Claude Code remediation prompts. Windows/macOS are out of scope.
+> minisoc2 is the next generation of minisoc: an AI-era defense system for **Linux servers only** (Amazon Linux 2023, Ubuntu, and other RPM/dpkg/apk distros). On top of SBOM/CVE/log monitoring it adds server-side AIDE-style file-integrity detection, Sigma log threat detection, pull-type (read-only SSH) registration for agent-less hosts, admin TOTP 2FA, per-host allowed-IP lists, and copy-paste Claude Code remediation prompts. Every host is accessed read-only; the server never writes to a host or runs commands on it. Windows/macOS are out of scope.
 
 ## Overview
-minisoc2 is a lightweight, self-hosted SOC (security operations center) for a handful to a few hundred Linux servers. Every host is accessed **read-only** — the server can never push commands or writes to a host.
+minisoc2 is a lightweight, self-hosted SOC (security operations center) for a handful to a few hundred Linux servers. Every host is accessed **read-only** â the server can never push commands or writes to a host.
 
 - **Agent** (`agent/`): a single dependency-free Node.js file. A scheduler (cron) runs it; it collects installed packages, pending OS security updates and host state, reports to the server and exits. Nothing stays resident and the server can never send commands to hosts.
 - **Server** (`server/`): Next.js + PostgreSQL web console and API, plus a worker that syncs vulnerability feeds, matches every host's inventory, and emails alerts.
@@ -24,7 +24,12 @@ The first report from a host sets a baseline (one summary mail). After that, onl
 
 **Log monitoring**: each run also sends new journald entries and log files (`/var/log/secure`, `auth.log`, fail2ban, Apache/nginx access logs; configurable) incrementally, and applications can push lines any time with `minisoc2-agent send-log`. Rules raise alerts for SSH logins from new IPs, brute force, sudo failures, sudo by new users, account creation, sensitive web paths answered with 200, 404 scan bursts and audit keys; a daily check flags sources whose volume is 3x their 7-day average. Raw logs are kept for a configurable period (default 30 days, daily partitions) and stop being stored above a disk usage threshold; daily aggregates are kept forever.
 
-Roadmap (AI-defense features being added): server-side AIDE-style file-integrity detection with auto-promoted baselines, Sigma log threat detection, pull-type read-only SSH collection for agent-less hosts (e.g. shared hosting), TOTP 2FA for the console, per-host allowed-IP lists, and per-remediation Claude Code prompts you can copy and run on the host.
+AI-defense features (implemented):
+- **File-integrity (AIDE-style)**: the agent hashes watched system paths read-only; the baseline lives on the server and auto-promotes, and changes to SSH keys, sudoers, passwd/shadow, binaries, cron or systemd units raise alerts.
+- **Log threat detection (Sigma)**: SigmaHQ Linux rules are synced and compiled to line matchers, run alongside the built-in high-signal rules.
+- **Pull-type hosts (read-only SSH)**: for hosts that cannot run the agent (e.g. shared hosting / Sakura rental server) â lockfile SBOM, runtime versions, ports and daily logs over SSH, no root required, no writes.
+- **Projects**: evaluation runs only on registered projects; the agent's auto-detected directories are shown as candidates to approve. Sub-directories can be excluded.
+- **Allowed-IP lists** per host (and a global default), **TOTP 2FA** for the console, and **copy-paste Claude Code remediation prompts** per fix.
 
 ### Agent updates
 Each run fetches `<server>/agent/manifest.json`. If a newer build is listed, it is downloaded, its sha256 and **ed25519 signature** are checked against the public key embedded in the running agent, and then it runs. If anything fails, the newest build already on disk runs instead. You can pin a version (`minisoc2-agent config --pin 0.1.0`) or turn updates off (`--auto-update off`).
@@ -65,13 +70,14 @@ Vercel and other serverless hosts are not supported: the worker must run continu
 
 ## Usage
 1. Open `https://<your-server>/setup` and create the administrator. You need the `SETUP_TOKEN` from `.env`.
-2. **Settings**: turn on email. For Gmail, use an app password: Google Account → Security → 2-Step Verification → App passwords. Then send a test mail.
+2. **Settings**: turn on email. For Gmail, use an app password: Google Account â Security â 2-Step Verification â App passwords. Then send a test mail.
 3. **Add host**: create an enroll token and run the command shown on the target host, for example:
    ```bash
    sudo npx -y https://<your-server>/agent/minisoc2-agent.tgz install \
      --server https://<your-server> --token <enroll-token> --scan /srv,/var/www,/home
    ```
    This registers the host, copies the agent to `~/.minisoc2/`, schedules an hourly run, and sends the first report.
+   For hosts that cannot run the agent (shared hosting), use **Hosts → Add pull host (SSH)** instead: the server collects over read-only SSH.
 4. Review **Vulnerabilities**, **Alerts** and **Hosts**. Add CVEs you must track to **Watched CVEs**.
 
 Agent commands:
@@ -96,48 +102,53 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 # minisoc2
 
-> **状態：開発中。** minisoc2 は minisoc の次世代版で、AI 時代の防御システムとして **Linux サーバー専用**（Amazon Linux 2023・Ubuntu ほか RPM/dpkg/apk 系）に作り直しています。継承した SBOM/CVE/ログ監視の土台に、サーバー側 AIDE 相当のファイル改ざん検知、Sigma によるログ脅威検知、エージェントを置けないホスト向けのプル型（読み取り専用 SSH）登録、TOTP 2FA、ホストごとの許可 IP、コピペで使える Claude Code 修復プロンプトを追加していきます。Windows / macOS は対象外です。
+> minisoc2 ã¯ minisoc ã®æ¬¡ä¸ä»£çã§ãAI æä»£ã®é²å¾¡ã·ã¹ãã ã¨ãã¦ **Linux ãµã¼ãã¼å°ç¨**ï¼Amazon Linux 2023ã»Ubuntu ã»ã RPM/dpkg/apk ç³»ï¼ã«ä½ããã¦ãã¾ããSBOM/CVE/ã­ã°ç£è¦ã«å ãããµã¼ãã¼å´ AIDE ç¸å½ã®ãã¡ã¤ã«æ¹ããæ¤ç¥ãSigma ã«ããã­ã°èå¨æ¤ç¥ãã¨ã¼ã¸ã§ã³ããç½®ããªããã¹ãåãã®ãã«åï¼èª­ã¿åãå°ç¨ SSHï¼ç»é²ãç®¡çè TOTP 2FAããã¹ããã¨ã®è¨±å¯ IPãã³ããã§ä½¿ãã Claude Code ä¿®å¾©ãã­ã³ãããåãã¾ãããã¹ãã¸ã®ã¢ã¯ã»ã¹ã¯å¿ãèª­ã¿åãå°ç¨ã§ããµã¼ãã¼ãããã¹ãã¸æ¸ãè¾¼ã¿ãå½ä»¤ã¯è¡ãã¾ãããWindows / macOS ã¯å¯¾è±¡å¤ã§ãã
 
-## 概要
-minisoc2 は、数台〜数百台の Linux サーバーを見守る軽量なセルフホスト型 SOC（セキュリティ監視センター）です。ホストへのアクセスは必ず**読み取り専用**で、サーバーからホストへ命令や書き込みを送る経路はありません。
+## æ¦è¦
+minisoc2 ã¯ãæ°å°ãæ°ç¾å°ã® Linux ãµã¼ãã¼ãè¦å®ãè»½éãªã»ã«ããã¹ãå SOCï¼ã»ã­ã¥ãªãã£ç£è¦ã»ã³ã¿ã¼ï¼ã§ãããã¹ãã¸ã®ã¢ã¯ã»ã¹ã¯å¿ã**èª­ã¿åãå°ç¨**ã§ããµã¼ãã¼ãããã¹ãã¸å½ä»¤ãæ¸ãè¾¼ã¿ãéãçµè·¯ã¯ããã¾ããã
 
-- **エージェント**（`agent/`）：依存ゼロの Node.js 単一ファイル。cron やタスクスケジューラから起動されると、インストール済みパッケージ・OS の未適用セキュリティ更新・ホストの状態を集めてサーバーへ送り、終了します。常駐せず、サーバーからホストへ命令を送る経路もありません。
-- **サーバー**（`server/`）：Next.js + PostgreSQL の管理画面と API に加え、脆弱性フィードの同期・全ホストの照合・メール通知を行うワーカーで構成されます。
+- **ã¨ã¼ã¸ã§ã³ã**ï¼`agent/`ï¼ï¼ä¾å­ã¼ã­ã® Node.js åä¸ãã¡ã¤ã«ãcron ãã¿ã¹ã¯ã¹ã±ã¸ã¥ã¼ã©ããèµ·åãããã¨ãã¤ã³ã¹ãã¼ã«æ¸ã¿ããã±ã¼ã¸ã»OS ã®æªé©ç¨ã»ã­ã¥ãªãã£æ´æ°ã»ãã¹ãã®ç¶æãéãã¦ãµã¼ãã¼ã¸éããçµäºãã¾ããå¸¸é§ããããµã¼ãã¼ãããã¹ãã¸å½ä»¤ãéãçµè·¯ãããã¾ããã
+- **ãµã¼ãã¼**ï¼`server/`ï¼ï¼Next.js + PostgreSQL ã®ç®¡çç»é¢ã¨ API ã«å ããèå¼±æ§ãã£ã¼ãã®åæã»å¨ãã¹ãã®ç§åã»ã¡ã¼ã«éç¥ãè¡ãã¯ã¼ã«ã¼ã§æ§æããã¾ãã
 
-現在検知できるもの：
+ç¾å¨æ¤ç¥ã§ãããã®ï¼
 
-| 対象 | 情報源 |
+| å¯¾è±¡ | æå ±æº |
 |---|---|
-| アプリ依存の脆弱性（npm の `package-lock.json`、PyPI の `requirements*.txt` の固定版、Packagist の `composer.lock`） | OSV.dev |
-| Debian / Ubuntu / Alpine のパッケージ | OSV.dev |
-| RPM 系（Amazon Linux、RHEL 系）の未適用セキュリティ更新 | ホスト自身の `dnf updateinfo`（Amazon Linux 2023 では `--releasever=latest` を付与） |
-| 実際に悪用されている脆弱性 | CISA KEV |
-| 報告が止まったホスト、更新が止まった脆弱性フィード | サーバー自身 |
-| 新しい待受ポート、新しいログインアカウント、`authorized_keys`・`sudoers`・`passwd`・cron の変更 | エージェントが集めるホスト状態 |
-| 監視対象に登録した CVE（出現時と、修正が届いた時に通知） | サーバー自身 |
+| ã¢ããªä¾å­ã®èå¼±æ§ï¼npm ã® `package-lock.json`ãPyPI ã® `requirements*.txt` ã®åºå®çãPackagist ã® `composer.lock`ï¼ | OSV.dev |
+| Debian / Ubuntu / Alpine ã®ããã±ã¼ã¸ | OSV.dev |
+| RPM ç³»ï¼Amazon LinuxãRHEL ç³»ï¼ã®æªé©ç¨ã»ã­ã¥ãªãã£æ´æ° | ãã¹ãèªèº«ã® `dnf updateinfo`ï¼Amazon Linux 2023 ã§ã¯ `--releasever=latest` ãä»ä¸ï¼ |
+| å®éã«æªç¨ããã¦ããèå¼±æ§ | CISA KEV |
+| å ±åãæ­¢ã¾ã£ããã¹ããæ´æ°ãæ­¢ã¾ã£ãèå¼±æ§ãã£ã¼ã | ãµã¼ãã¼èªèº« |
+| æ°ããå¾åãã¼ããæ°ããã­ã°ã¤ã³ã¢ã«ã¦ã³ãã`authorized_keys`ã»`sudoers`ã»`passwd`ã»cron ã®å¤æ´ | ã¨ã¼ã¸ã§ã³ããéãããã¹ãç¶æ |
+| ç£è¦å¯¾è±¡ã«ç»é²ãã CVEï¼åºç¾æã¨ãä¿®æ­£ãå±ããæã«éç¥ï¼ | ãµã¼ãã¼èªèº« |
 
-ホストの初回報告は基準線として扱い、まとめのメールを1通だけ送ります。以降は新しく見つかったものだけを通知します。「影響しない」と判断した脆弱性は CycloneDX VEX の理由を付けて抑止でき、その判断が記録に残ります。
+ãã¹ãã®ååå ±åã¯åºæºç·ã¨ãã¦æ±ããã¾ã¨ãã®ã¡ã¼ã«ã1éã ãéãã¾ããä»¥éã¯æ°ããè¦ã¤ãã£ããã®ã ããéç¥ãã¾ãããå½±é¿ããªããã¨å¤æ­ããèå¼±æ§ã¯ CycloneDX VEX ã®çç±ãä»ãã¦ææ­¢ã§ãããã®å¤æ­ãè¨é²ã«æ®ãã¾ãã
 
-**ログ監視**：エージェントは実行のたびに journald と各ログファイル（`/var/log/secure`、`auth.log`、fail2ban、Apache / nginx のアクセスログなど。変更可）の新しい分だけを送ります。アプリからは `minisoc2-agent send-log` でいつでも送れます。ルールで次の事象をアラートにします。
-- 初めて見るIPからのSSHログイン
-- SSHの総当たり
-- sudo の認証失敗、初めて見るユーザーによる sudo
-- アカウントの作成
-- 機微なWebパスへの200応答、404の大量発生（スキャン）
-- auditd の監視キーに一致する変更
+**ã­ã°ç£è¦**ï¼ã¨ã¼ã¸ã§ã³ãã¯å®è¡ã®ãã³ã« journald ã¨åã­ã°ãã¡ã¤ã«ï¼`/var/log/secure`ã`auth.log`ãfail2banãApache / nginx ã®ã¢ã¯ã»ã¹ã­ã°ãªã©ãå¤æ´å¯ï¼ã®æ°ããåã ããéãã¾ããã¢ããªããã¯ `minisoc2-agent send-log` ã§ãã¤ã§ãéãã¾ããã«ã¼ã«ã§æ¬¡ã®äºè±¡ãã¢ã©ã¼ãã«ãã¾ãã
+- åãã¦è¦ãIPããã®SSHã­ã°ã¤ã³
+- SSHã®ç·å½ãã
+- sudo ã®èªè¨¼å¤±æãåãã¦è¦ãã¦ã¼ã¶ã¼ã«ãã sudo
+- ã¢ã«ã¦ã³ãã®ä½æ
+- æ©å¾®ãªWebãã¹ã¸ã®200å¿ç­ã404ã®å¤§éçºçï¼ã¹ã­ã£ã³ï¼
+- auditd ã®ç£è¦ã­ã¼ã«ä¸è´ããå¤æ´
 
-あわせて、ログ量が直近7日平均の3倍を超えたソースを毎日検出します。生ログは日別に分けて保存し、保存期間（既定30日）を過ぎると消します。ディスク使用率が上限を超えている間は保存を止めます。日別の集計値は永続的に残します。
+ãããã¦ãã­ã°éãç´è¿7æ¥å¹³åã®3åãè¶ããã½ã¼ã¹ãæ¯æ¥æ¤åºãã¾ããçã­ã°ã¯æ¥å¥ã«åãã¦ä¿å­ããä¿å­æéï¼æ¢å®30æ¥ï¼ãéããã¨æ¶ãã¾ãããã£ã¹ã¯ä½¿ç¨çãä¸éãè¶ãã¦ããéã¯ä¿å­ãæ­¢ãã¾ããæ¥å¥ã®éè¨å¤ã¯æ°¸ç¶çã«æ®ãã¾ãã
 
-今後追加する AI 防御機能：サーバー側の AIDE 相当のファイル改ざん検知（ベースライン自動昇格）、Sigma によるログ脅威検知、エージェントを置けないホスト（共用レンタルサーバー等）向けのプル型（読み取り専用 SSH）収集、管理画面の TOTP 2FA、ホストごとの許可 IP、修復ごとにコピペして実行できる Claude Code プロンプト。
+AI é²å¾¡æ©è½ï¼å®è£æ¸ã¿ï¼ï¼
+- **ãã¡ã¤ã«æ¹ããæ¤ç¥ï¼AIDEç¸å½ï¼**ï¼ã¨ã¼ã¸ã§ã³ããç£è¦å¯¾è±¡ã®èª­ã¿åãå°ç¨ããã·ã¥ãéãããã¼ã¹ã©ã¤ã³ã¯ãµã¼ãã¼å´ã§èªåææ ¼ãSSHéµã»sudoersã»passwd/shadowã»å®è¡ãã¡ã¤ã«ã»cronã»systemd ã®å¤åãã¢ã©ã¼ãã
+- **ã­ã°èå¨æ¤ç¥ï¼Sigmaï¼**ï¼SigmaHQ ã® Linux ã«ã¼ã«ãåæã»ã³ã³ãã¤ã«ããèªä½ã®é«ã·ã°ãã«ã«ã¼ã«ã¨ä½µç¨ã
+- **ãã«åãã¹ãï¼èª­ã¿åãå°ç¨ SSHï¼**ï¼ã¨ã¼ã¸ã§ã³ããç½®ããªããã¹ãï¼å±ç¨ã¬ã³ã¿ã«ãµã¼ãã¼ï¼ãããç­ï¼åããlockfile ã® SBOMã»ã©ã³ã¿ã¤ã çã»ãã¼ãã»æ¥æ¬¡ã­ã°ã SSH ã§åéãroot ä¸è¦ã»æ¸ãè¾¼ã¿ãªãã
+- **ãã­ã¸ã§ã¯ã**ï¼è©ä¾¡ã¯ç»é²æ¸ã¿ãã­ã¸ã§ã¯ãã®ã¿ãã¨ã¼ã¸ã§ã³ããèªåæ¤åºãããã£ã¬ã¯ããªã¯åè£ã¨ãã¦æ¿èªç»é²ããµããã£ã¬ã¯ããªã®é¤å¤ãå¯è½ã
+- ãã¹ããã¨ã®**è¨±å¯IP**ï¼ï¼å¨ä½æ¢å®ï¼ãç®¡çç»é¢ã® **TOTP 2FA**ãä¿®å¾©ãã¨ã® **Claude Code ãã­ã³ããï¼ã³ããå®è¡ï¼**ã
 
-### エージェントの更新
-エージェントは起動のたびに `<server>/agent/manifest.json` を確認します。新しい版があればダウンロードし、sha256 と **ed25519 署名**を、実行中のエージェントに埋め込まれた公開鍵で検証してから実行します。どこかで失敗した場合は、手元にある最新の版で動きます。版の固定（`minisoc2-agent config --pin 0.1.0`）や、更新の停止（`--auto-update off`）もできます。
+### ã¨ã¼ã¸ã§ã³ãã®æ´æ°
+ã¨ã¼ã¸ã§ã³ãã¯èµ·åã®ãã³ã« `<server>/agent/manifest.json` ãç¢ºèªãã¾ããæ°ããçãããã°ãã¦ã³ã­ã¼ãããsha256 ã¨ **ed25519 ç½²å**ããå®è¡ä¸­ã®ã¨ã¼ã¸ã§ã³ãã«åãè¾¼ã¾ããå¬ééµã§æ¤è¨¼ãã¦ããå®è¡ãã¾ããã©ããã§å¤±æããå ´åã¯ãæåã«ããææ°ã®çã§åãã¾ããçã®åºå®ï¼`minisoc2-agent config --pin 0.1.0`ï¼ããæ´æ°ã®åæ­¢ï¼`--auto-update off`ï¼ãã§ãã¾ãã
 
-npm やインターネットには出られないが minisoc2 サーバーには届くネットワークでも、エージェントの配布元が自前の minisoc2 サーバーなので同じように動きます。minisoc2 サーバーに届かないホストは対象外です。
+npm ãã¤ã³ã¿ã¼ãããã«ã¯åºãããªãã minisoc2 ãµã¼ãã¼ã«ã¯å±ããããã¯ã¼ã¯ã§ããã¨ã¼ã¸ã§ã³ãã®éå¸åãèªåã® minisoc2 ãµã¼ãã¼ãªã®ã§åãããã«åãã¾ããminisoc2 ãµã¼ãã¼ã«å±ããªããã¹ãã¯å¯¾è±¡å¤ã§ãã
 
-## インストール方法
+## ã¤ã³ã¹ãã¼ã«æ¹æ³
 
-必要なもの：Node.js 20.9 以上、PostgreSQL 14 以上、TLS 付きのリバースプロキシ（Apache や nginx など）。
+å¿è¦ãªãã®ï¼Node.js 20.9 ä»¥ä¸ãPostgreSQL 14 ä»¥ä¸ãTLS ä»ãã®ãªãã¼ã¹ãã­ã­ã·ï¼Apache ã nginx ãªã©ï¼ã
 
 ```bash
 git clone https://github.com/daishir0/minisoc2.git
@@ -147,33 +158,33 @@ npm install
 
 sudo -u postgres psql -c "CREATE USER minisoc2 WITH PASSWORD 'secret';" -c "CREATE DATABASE minisoc2 OWNER minisoc2;"
 
-cp server/.env.example server/.env    # すべての値を書き換える
-npm run keygen                       # エージェント署名用の ed25519 鍵を作成
-npm run agent:release                # エージェントをビルド・署名して server/data/agent に配置
+cp server/.env.example server/.env    # ãã¹ã¦ã®å¤ãæ¸ãæãã
+npm run keygen                       # ã¨ã¼ã¸ã§ã³ãç½²åç¨ã® ed25519 éµãä½æ
+npm run agent:release                # ã¨ã¼ã¸ã§ã³ãããã«ãã»ç½²åãã¦ server/data/agent ã«éç½®
 
 cd server
 npm run migrate
 npm run build
-npm run start      # 管理画面と API（ポート 3032）
-npm run worker     # バックグラウンド処理（別サービスとして起動）
+npm run start      # ç®¡çç»é¢ã¨ APIï¼ãã¼ã 3032ï¼
+npm run worker     # ããã¯ã°ã©ã¦ã³ãå¦çï¼å¥ãµã¼ãã¹ã¨ãã¦èµ·åï¼
 ```
 
-`npm run start` と `npm run worker` は、どちらも systemd などのスーパーバイザで常駐させ、ポート 3032 の前にリバースプロキシを置いてください。
+`npm run start` ã¨ `npm run worker` ã¯ãã©ã¡ãã systemd ãªã©ã®ã¹ã¼ãã¼ãã¤ã¶ã§å¸¸é§ããããã¼ã 3032 ã®åã«ãªãã¼ã¹ãã­ã­ã·ãç½®ãã¦ãã ããã
 
-ModSecurity と OWASP CRS を使っている場合は、`/api/v1/enroll`・`/api/v1/report`・`/api/v1/logs` をボディ検査の対象から外してください。エージェントは `Content-Encoding: gzip` で送信するため、CRS のルール 920450 に止められます。
+ModSecurity ã¨ OWASP CRS ãä½¿ã£ã¦ããå ´åã¯ã`/api/v1/enroll`ã»`/api/v1/report`ã»`/api/v1/logs` ãããã£æ¤æ»ã®å¯¾è±¡ããå¤ãã¦ãã ãããã¨ã¼ã¸ã§ã³ãã¯ `Content-Encoding: gzip` ã§éä¿¡ãããããCRS ã®ã«ã¼ã« 920450 ã«æ­¢ãããã¾ãã
 
-ワーカーの常駐と PostgreSQL が必要なため、Vercel などのサーバーレス環境には対応していません。
+ã¯ã¼ã«ã¼ã®å¸¸é§ã¨ PostgreSQL ãå¿è¦ãªãããVercel ãªã©ã®ãµã¼ãã¼ã¬ã¹ç°å¢ã«ã¯å¯¾å¿ãã¦ãã¾ããã
 
-## 使い方
-1. `https://<サーバー>/setup` を開き、`.env` の `SETUP_TOKEN` を使って管理者を作成します。
-2. **Settings** でメール通知を有効にします。Gmail の場合はアプリパスワードを使います（Google アカウント → セキュリティ → 2 段階認証 → アプリパスワード）。テストメールで確認できます。
-3. **Add host** で登録トークンを作り、表示されたコマンドを対象ホストで実行します。ホストの登録、`~/.minisoc2/` へのコピー、1時間ごとの定期実行の登録、初回報告までを一度に行います。
-4. **Vulnerabilities**・**Alerts**・**Hosts** を確認します。追跡が必要な CVE は **Watched CVEs** に登録します。
+## ä½¿ãæ¹
+1. `https://<ãµã¼ãã¼>/setup` ãéãã`.env` ã® `SETUP_TOKEN` ãä½¿ã£ã¦ç®¡çèãä½æãã¾ãã
+2. **Settings** ã§ã¡ã¼ã«éç¥ãæå¹ã«ãã¾ããGmail ã®å ´åã¯ã¢ããªãã¹ã¯ã¼ããä½¿ãã¾ãï¼Google ã¢ã«ã¦ã³ã â ã»ã­ã¥ãªãã£ â 2 æ®µéèªè¨¼ â ã¢ããªãã¹ã¯ã¼ãï¼ããã¹ãã¡ã¼ã«ã§ç¢ºèªã§ãã¾ãã
+3. **Add host** ã§ç»é²ãã¼ã¯ã³ãä½ããè¡¨ç¤ºãããã³ãã³ããå¯¾è±¡ãã¹ãã§å®è¡ãã¾ãããã¹ãã®ç»é²ã`~/.minisoc2/` ã¸ã®ã³ãã¼ã1æéãã¨ã®å®æå®è¡ã®ç»é²ãååå ±åã¾ã§ãä¸åº¦ã«è¡ãã¾ãã
+4. **Vulnerabilities**ã»**Alerts**ã»**Hosts** ãç¢ºèªãã¾ããè¿½è·¡ãå¿è¦ãª CVE ã¯ **Watched CVEs** ã«ç»é²ãã¾ãã
 
-## 注意点
-- システム全体のファイルを読むために、エージェントは root（または管理者）で実行してください。権限が足りない項目は飛ばし、収集エラーとして報告します。パスワードなしで sudo できるユーザーで動かす場合は、`config --sudo on` にするとログを `sudo -n` 経由で読みます。
-- `requirements.txt` は `==` で固定された行だけを照合します。範囲指定の行は対象外です。
-- 署名用の秘密鍵は監視対象のホストに置かないでください。鍵を作り直す（`npm run keygen -- --force`）と、既存のエージェントは再インストールするまで新しい版を受け付けません。
+## æ³¨æç¹
+- ã·ã¹ãã å¨ä½ã®ãã¡ã¤ã«ãèª­ãããã«ãã¨ã¼ã¸ã§ã³ãã¯ rootï¼ã¾ãã¯ç®¡çèï¼ã§å®è¡ãã¦ãã ãããæ¨©éãè¶³ããªãé ç®ã¯é£ã°ããåéã¨ã©ã¼ã¨ãã¦å ±åãã¾ãããã¹ã¯ã¼ããªãã§ sudo ã§ããã¦ã¼ã¶ã¼ã§åããå ´åã¯ã`config --sudo on` ã«ããã¨ã­ã°ã `sudo -n` çµç±ã§èª­ã¿ã¾ãã
+- `requirements.txt` ã¯ `==` ã§åºå®ãããè¡ã ããç§åãã¾ããç¯å²æå®ã®è¡ã¯å¯¾è±¡å¤ã§ãã
+- ç½²åç¨ã®ç§å¯éµã¯ç£è¦å¯¾è±¡ã®ãã¹ãã«ç½®ããªãã§ãã ãããéµãä½ãç´ãï¼`npm run keygen -- --force`ï¼ã¨ãæ¢å­ã®ã¨ã¼ã¸ã§ã³ãã¯åã¤ã³ã¹ãã¼ã«ããã¾ã§æ°ããçãåãä»ãã¾ããã
 
-## ライセンス
-このプロジェクトはMITライセンスの下でライセンスされています。詳細はLICENSEファイルを参照してください。
+## ã©ã¤ã»ã³ã¹
+ãã®ãã­ã¸ã§ã¯ãã¯MITã©ã¤ã»ã³ã¹ã®ä¸ã§ã©ã¤ã»ã³ã¹ããã¦ãã¾ããè©³ç´°ã¯LICENSEãã¡ã¤ã«ãåç§ãã¦ãã ããã
