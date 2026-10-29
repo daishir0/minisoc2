@@ -28,6 +28,10 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
   const sources = await q<{ source: string; lines: string }>(
     `SELECT source, sum(lines) AS lines FROM log_daily WHERE day > current_date - 7 ${hostCond} GROUP BY source ORDER BY 2 DESC LIMIT 50`, hp,
   );
+  // Sigma rule titles (for rows whose rule_id is "sigma:...") and feed status.
+  const sigmaTitles = Object.fromEntries((await q<{ id: string; title: string }>('SELECT id, title FROM sigma_rules')).map((r) => [r.id, `Sigma: ${r.title}`]));
+  const title = (id: string) => RULE_TITLE[id] ?? sigmaTitles[id] ?? id;
+  const sigmaFeed = (await q<{ item_count: number | null; last_success: Date | null }>("SELECT item_count, last_success FROM feed_status WHERE name='sigma'"))[0];
 
   const where: string[] = [];
   const params: unknown[] = [];
@@ -80,9 +84,13 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
           {days.length > 0 && <div className="mt-1 flex justify-between text-xs text-muted"><span>{days[0].day}</span><span>{days[days.length - 1].day}</span></div>}
         </Card>
         <Card title="検知ルールに一致したログの件数（7日・アラート数ではありません）">
+          <p className="mb-2 text-xs text-muted">
+            自作の高シグナルルールに加え、Sigma（SigmaHQ）ルール {sigmaFeed?.item_count ?? 0} 件を適用中
+            {sigmaFeed?.last_success ? `（最終同期 ${ago(sigmaFeed.last_success)}）` : '（同期待ち）'}。
+          </p>
           {rules.length === 0 ? <p className="text-sm text-muted">一致はありません。</p> : (
             <table className="tbl"><thead><tr><th>ルール</th><th>今日</th><th>7日</th></tr></thead><tbody>
-              {rules.map((r) => <tr key={r.rule_id}><td>{RULE_TITLE[r.rule_id] ?? r.rule_id}</td><td>{r.today ?? 0}</td><td>{r.week}</td></tr>)}
+              {rules.map((r) => <tr key={r.rule_id}><td>{title(r.rule_id)}</td><td>{r.today ?? 0}</td><td>{r.week}</td></tr>)}
             </tbody></table>
           )}
         </Card>

@@ -6,6 +6,7 @@ import { q, q1 } from '../src/lib/db';
 import { migrate } from './migrate';
 import { statfs } from 'node:fs/promises';
 import { syncKev } from '../src/lib/feeds';
+import { syncSigma } from '../src/lib/sigma';
 import { dropOldPartitions, ensurePartition } from '../src/lib/logs';
 import { matchHost } from '../src/lib/match';
 import { recordEvent } from '../src/lib/events';
@@ -48,6 +49,17 @@ async function feeds() {
         await recordEvent({ kind: 'health', important: true, title: `脆弱性フィード「${f.name}」が48時間以上更新されていません` });
       }
     }
+  }
+}
+
+async function sigmaSync() {
+  const f = await q1<{ last_success: Date | null }>("SELECT last_success FROM feed_status WHERE name='sigma'");
+  if (f?.last_success && Date.now() - f.last_success.getTime() < 7 * 24 * 3600_000) return;
+  try {
+    const r = await syncSigma();
+    log(`sigma synced: ${r.kept} rules compiled of ${r.total} linux rules`);
+  } catch (e) {
+    log(`sigma sync failed: ${errMsg(e)}`);
   }
 }
 
@@ -167,6 +179,7 @@ async function tick(n: number) {
     ['matchPending', matchPending, 1],
     ['staleHosts', staleHosts, 5],
     ['feeds', feeds, 10],
+    ['sigmaSync', sigmaSync, 60],
     ['dailyRematch', dailyRematch, 10],
     ['notify', async () => {
       const r = await notifyPending(PUBLIC_URL);

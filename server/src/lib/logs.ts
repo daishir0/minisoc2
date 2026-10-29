@@ -6,6 +6,7 @@ import type { HostRow } from './ingest';
 import type { LogBatch } from './payload';
 import { recordEvent } from './events';
 import { matchLine, type Hit } from './rules';
+import { getSigmaRules, matchSigma } from './sigma';
 import { getPolicy, getSetting } from './settings';
 
 const partitions = new Set<string>();
@@ -73,11 +74,13 @@ export async function ingestLogs(host: HostRow, batch: LogBatch): Promise<{ line
     );
   }
 
-  // 3. detection rules
+  // 3. detection rules: the curated high-signal rules plus compiled Sigma (SigmaHQ) rules
+  const sigma = await getSigmaRules();
   const hits: Hit[] = [];
   for (const e of entries) {
     const ts = e.t && !Number.isNaN(Date.parse(e.t)) ? new Date(e.t) : now;
     hits.push(...matchLine(e.s, e.m, ts));
+    if (sigma.length) hits.push(...matchSigma(sigma, e.s, e.m, ts));
   }
   if (hits.length) await handleHits(host, hits, firstBatch);
 
