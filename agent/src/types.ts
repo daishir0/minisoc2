@@ -75,6 +75,7 @@ export interface Report {
   durationMs: number;
   host: HostInfo;
   packages: Pkg[];
+  projectDirs?: string[]; // directories holding a project marker (candidate projects, even without a lockfile)
   scanPaths?: string[]; // roots searched for lockfiles (the server derives systems from them)
   pythonEnvs?: string[]; // shared Python environments that were inventoried (each becomes a system)
   osAdvisories: OsAdvisory[] | null; // null = not supported on this OS

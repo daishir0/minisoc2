@@ -44,7 +44,7 @@ export async function collect(cfg: AgentConfig, agentVersion: string): Promise<R
     step('osAdvisories', () => dnfAdvisories(errors, cfg.useSudo), null),
     step('state', () => hostState(), { ports: [], users: [], fileHashes: {} }),
   ]);
-  const appPkgs = await step('deps', () => collectDeps(cfg.scanPaths, cfg.skipDirs, errors, cfg.pythonEnvs), []);
+  const deps = await step('deps', () => collectDeps(cfg.scanPaths, cfg.skipDirs, errors, cfg.pythonEnvs), { packages: [], projectDirs: [] });
   const osFixed = await step('osFixed', () => dnfFixed(errors, cfg.useSudo), null);
   const services = await step('services', () => linuxServices(errors), []);
   const integrity = cfg.aide
@@ -57,7 +57,8 @@ export async function collect(cfg: AgentConfig, agentVersion: string): Promise<R
     startedAt: new Date(started).toISOString(),
     durationMs: Date.now() - started,
     host: hostInfo(),
-    packages: [...osPkgs, ...appPkgs],
+    packages: [...osPkgs, ...deps.packages],
+    projectDirs: deps.projectDirs,
     scanPaths: cfg.scanPaths,
     pythonEnvs: expandEnvs(cfg.pythonEnvs ?? DEFAULT_PYTHON_ENVS),
     osAdvisories,

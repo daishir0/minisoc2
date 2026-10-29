@@ -3,7 +3,7 @@ import { notFound } from 'next/navigation';
 import { Card, Sev, ago } from '@/components/ui';
 import { q, q1 } from '@/lib/db';
 import type { HostState } from '@/lib/payload';
-import { hostAction, pollPullNow } from '../../actions';
+import { hostAction, pollPullNow, savePullAide } from '../../actions';
 import { PendingButton } from '@/components/PendingButton';
 
 export default async function HostPage({ params }: { params: Promise<{ id: string }> }) {
@@ -15,8 +15,8 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   }>('SELECT * FROM hosts WHERE id=$1', [id]);
   if (!h) notFound();
   const pull = h.kind === 'pull'
-    ? await q1<{ ssh_host: string; ssh_port: number; ssh_user: string; auth: string; every_hours: number; last_poll_at: Date | null; last_error: string | null }>(
-      'SELECT ssh_host, ssh_port, ssh_user, auth, every_hours, last_poll_at, last_error FROM pull_targets WHERE host_id=$1', [id])
+    ? await q1<{ ssh_host: string; ssh_port: number; ssh_user: string; auth: string; every_hours: number; last_poll_at: Date | null; last_error: string | null; aide_paths: string[]; aide_excludes: string[] }>(
+      'SELECT ssh_host, ssh_port, ssh_user, auth, every_hours, last_poll_at, last_error, aide_paths, aide_excludes FROM pull_targets WHERE host_id=$1', [id])
     : null;
   const fileBase = Number((await q<{ n: string }>('SELECT count(*) AS n FROM host_file_baseline WHERE host_id=$1', [id]))[0].n);
   const fileChanges = await q<{ created_at: Date; important: boolean; title: string }>(
@@ -152,7 +152,9 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       )}
       <Card title="ファイル改ざん検知（AIDE相当）">
         {fileBase === 0 ? (
-          <p className="text-sm text-muted">まだベースラインがありません。エージェント 0.1.0 以降が有効なら、次回の報告で確定します（設定で <code>--aide off</code> なら無効）。</p>
+          <p className="text-sm text-muted">{pull
+            ? '下の「監視ディレクトリ」を設定して「保存」すると、次回の収集でベースラインを確定します（未設定だと SSH鍵・crontab のみ監視）。'
+            : <>まだベースラインがありません。エージェントが有効なら、次回の報告で確定します（ホスト側で <code>minisoc2-agent config --aide off</code> なら無効）。</>}</p>
         ) : (
           <>
             <p className="text-sm">
@@ -172,6 +174,18 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
               </ul>
             ) : <p className="mt-2 text-sm text-muted">ベースライン確定後、変化は検出されていません。</p>}
           </>
+        )}
+        {pull && (
+          <form action={savePullAide} className="mt-4 space-y-2 border-t border-line pt-3">
+            <input type="hidden" name="id" value={h.id} />
+            <h3 className="text-xs font-semibold text-muted">監視ディレクトリ（複数可・改行区切り）</h3>
+            <p className="text-xs text-muted">この配下のファイルを読み取り専用でハッシュし、改ざんを検知します。例：<code>~/www/path-finder.jp</code>、<code>~/bin</code>。空欄なら SSH鍵・crontab のみ。</p>
+            <textarea name="aidePaths" rows={3} className="input font-mono text-xs" defaultValue={(pull.aide_paths ?? []).join('\n')} placeholder={'~/www/path-finder.jp\n~/bin'} />
+            <h3 className="text-xs font-semibold text-muted">除外するサブディレクトリ（複数可・改行区切り）</h3>
+            <p className="text-xs text-muted">上の監視対象から外すパス。例：<code>~/www/path-finder.jp/cache</code>、<code>~/www/blog.path-finder.jp/wp-content/uploads</code>（node_modules・.git・vendor は自動除外）。</p>
+            <textarea name="aideExcludes" rows={2} className="input font-mono text-xs" defaultValue={(pull.aide_excludes ?? []).join('\n')} placeholder={'~/www/path-finder.jp/wp-content/cache'} />
+            <PendingButton className="btn-ghost" pendingText="保存中…">保存（次回の収集から反映）</PendingButton>
+          </form>
         )}
       </Card>
       <div className="grid gap-6 lg:grid-cols-2">

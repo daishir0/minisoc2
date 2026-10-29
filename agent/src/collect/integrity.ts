@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import { closeSync, openSync, readdirSync, readFileSync, readSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { DEFAULT_AIDE_PATHS, minisoc2Home, type AgentConfig } from '../config.js';
 import type { CollectError, FileHash } from '../types.js';
 
@@ -56,6 +57,9 @@ function expandGlob(pattern: string): string[] {
 export function fileIntegrity(cfg: AgentConfig, errors: CollectError[]): { files: FileHash[]; truncated: boolean } {
   const started = Date.now();
   const skip = new Set(cfg.skipDirs);
+  // absolute sub-paths to prune from the scan (with ~ expanded)
+  const excludes = (cfg.aideExcludes ?? []).map((p) => p.replace(/^~(?=\/|$)/, homedir()).replace(/\/+$/, ''));
+  const excluded = (full: string) => excludes.some((e) => full === e || full.startsWith(e + '/'));
   const cache = loadCache();
   const next: Record<string, CacheEntry> = {};
   const out: FileHash[] = [];
@@ -77,6 +81,7 @@ export function fileIntegrity(cfg: AgentConfig, errors: CollectError[]): { files
         return;
       }
       const full = join(dir, e.name);
+      if (excluded(full)) continue; // user-configured exclude (sub-directory or file)
       if (e.isSymbolicLink()) continue; // AIDE records link targets; we skip to avoid escaping the tree
       if (e.isDirectory()) {
         if (skip.has(e.name)) continue;

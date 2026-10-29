@@ -6,6 +6,9 @@ import type { CollectError, Pkg } from '../types.js';
 import { debug, errMsg, readText } from '../util.js';
 
 const LOCKFILES = new Set(['package-lock.json', 'composer.lock']);
+// Project markers: a directory holding one of these is an application root (candidate project),
+// even without a lockfile, so projects like a lock-less Next.js/PHP/Go app are still detected.
+const MARKERS = new Set(['package.json', 'composer.json', 'go.mod', 'Cargo.toml', 'Gemfile', 'pyproject.toml', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'yarn.lock', 'pnpm-lock.yaml']);
 const MAX_FILES = 5000;
 
 function isRequirements(name: string): boolean {
@@ -64,7 +67,7 @@ export function expandEnvs(patterns: string[]): string[] {
   return out;
 }
 
-export function findLockfiles(roots: string[], skipDirs: string[], errors: CollectError[], venvs: string[] = []): string[] {
+export function findLockfiles(roots: string[], skipDirs: string[], errors: CollectError[], venvs: string[] = [], projectDirs?: Set<string>): string[] {
   const skip = new Set(skipDirs);
   const found: string[] = [];
   const deadline = Date.now() + MAX_SCAN_MS;
@@ -92,8 +95,9 @@ export function findLockfiles(roots: string[], skipDirs: string[], errors: Colle
         // project virtualenvs are read for installed packages instead of being walked
         if (isVenv(full)) venvs.push(full);
         else if (!skip.has(e.name)) walk(full, depth + 1);
-      } else if (e.isFile() && (LOCKFILES.has(e.name) || isRequirements(e.name))) {
-        found.push(join(dir, e.name));
+      } else if (e.isFile()) {
+        if (LOCKFILES.has(e.name) || isRequirements(e.name)) found.push(join(dir, e.name));
+        if (projectDirs && (MARKERS.has(e.name) || LOCKFILES.has(e.name))) projectDirs.add(dir);
       }
     }
   };
@@ -149,10 +153,11 @@ function parseRequirements(text: string, source: string): Pkg[] {
   return out;
 }
 
-export function collectDeps(roots: string[], skipDirs: string[], errors: CollectError[], pythonEnvs: string[] = DEFAULT_PYTHON_ENVS): Pkg[] {
+export function collectDeps(roots: string[], skipDirs: string[], errors: CollectError[], pythonEnvs: string[] = DEFAULT_PYTHON_ENVS): { packages: Pkg[]; projectDirs: string[] } {
   const pkgs: Pkg[] = [];
   const venvs: string[] = [];
-  const files = findLockfiles(roots, skipDirs, errors, venvs);
+  const projectDirs = new Set<string>();
+  const files = findLockfiles(roots, skipDirs, errors, venvs, projectDirs);
   for (const env of [...new Set([...venvs, ...expandEnvs(pythonEnvs)])]) {
     debug(`site-packages ${env}`);
     pkgs.push(...sitePackages(env));
@@ -168,5 +173,5 @@ export function collectDeps(roots: string[], skipDirs: string[], errors: Collect
       errors.push({ step: 'deps', message: `${file}: ${errMsg(e)}` });
     }
   }
-  return pkgs;
+  return { packages: pkgs, projectDirs: [...projectDirs] };
 }

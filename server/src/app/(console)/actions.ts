@@ -119,6 +119,16 @@ export async function addPullHost(_: Result, fd: FormData): Promise<Result> {
   redirect(`/hosts/${id}`);
 }
 
+export async function savePullAide(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = String(fd.get('id'));
+  if (!/^[0-9a-f-]{36}$/.test(id)) return;
+  const lines = (k: string) => String(fd.get(k) ?? '').split(/[\n,]/).map((s) => s.trim()).filter(Boolean).filter(safePath).slice(0, 100);
+  await q('UPDATE pull_targets SET aide_paths=$2, aide_excludes=$3 WHERE host_id=$1', [id, lines('aidePaths'), lines('aideExcludes')]);
+  await opsEvent('プル型ホストの改ざん監視ディレクトリ設定を更新', id);
+  revalidatePath(`/hosts/${id}`);
+}
+
 export async function pollPullNow(fd: FormData): Promise<void> {
   await requireUser();
   const id = String(fd.get('id'));

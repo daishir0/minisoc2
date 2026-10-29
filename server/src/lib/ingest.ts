@@ -3,7 +3,7 @@ import { raiseAlert } from './alerts';
 import { q, q1, tx } from './db';
 import type { HostState, Report } from './payload';
 import { randomToken, safeEqual, sha256hex } from './secrets';
-import { defaultName, excludedBy, globToRegExp, serviceOsPackage, serviceRuntime, serviceSystem, systemOf } from './systems';
+import { defaultName, excludedBy, globToRegExp, OS_SYSTEM, serviceOsPackage, serviceRuntime, serviceSystem, systemOf } from './systems';
 import { ipAllowed } from './ipallow';
 import { getPolicy } from './settings';
 import { recordEvent } from './events';
@@ -135,6 +135,12 @@ export async function ingestReport(host: HostRow, r: Report): Promise<{ packages
     };
   });
   for (const sv of services) if (sv.systemRoot) allSystems.add(sv.systemRoot);
+  // directories holding a project marker (package.json, composer.json, go.mod ...) become candidate
+  // projects too, so a lock-less app is still detected. The sentinel makes systemOf group to the root.
+  for (const d of Array.isArray(r.projectDirs) ? r.projectDirs : []) {
+    const root = systemOf(`${clean(d)}/package.json`, scanPaths, roots, pythonEnvs);
+    if (root && root !== OS_SYSTEM) allSystems.add(root);
+  }
   const diffs = host.baseline_done ? stateDiff(host, r.state) : [];
 
   await tx(async (c) => {
