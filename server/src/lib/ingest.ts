@@ -7,6 +7,7 @@ import { defaultName, excludedBy, globToRegExp, serviceOsPackage, serviceRuntime
 import { ipAllowed } from './ipallow';
 import { getPolicy } from './settings';
 import { recordEvent } from './events';
+import { ingestFiles } from './fileintegrity';
 
 export interface HostRow {
   id: string;
@@ -226,6 +227,7 @@ export async function ingestReport(host: HostRow, r: Report): Promise<{ packages
   if (r.update?.error) {
     await raiseAlert({ kind: 'agent', severity: 'medium', hostId: host.id, title: `[${host.name}] エージェントの自己更新に失敗`, detail: r.update.error, dedupeKey: `update:${host.id}:${r.update.latest}:${r.update.error}` });
   }
+  await ingestFiles(host, r.files, !!r.filesTruncated);
   return { packages: pkgs.size, advisories: r.osAdvisories?.length ?? null };
 }
 

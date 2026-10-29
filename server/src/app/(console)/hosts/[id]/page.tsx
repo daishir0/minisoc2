@@ -10,9 +10,12 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   if (!/^[0-9a-f-]{36}$/.test(id)) notFound();
   const h = await q1<{
     id: string; name: string; hostname: string; platform: string; os_name: string; os_version: string; kernel: string; arch: string;
-    agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[]; allowed_ips: string[];
+    agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[]; allowed_ips: string[]; file_baseline_at: Date | null;
   }>('SELECT * FROM hosts WHERE id=$1', [id]);
   if (!h) notFound();
+  const fileBase = Number((await q<{ n: string }>('SELECT count(*) AS n FROM host_file_baseline WHERE host_id=$1', [id]))[0].n);
+  const fileChanges = await q<{ created_at: Date; important: boolean; title: string }>(
+    "SELECT created_at, important, title FROM change_events WHERE host_id=$1 AND kind='host_state' AND title LIKE '%監視ファイル%' ORDER BY created_at DESC LIMIT 8", [id]);
   // Projects on this host: registered (manual) are evaluated; auto-detected are approval candidates.
   const projects = await q<{ id: number; root: string; name: string; origin: string; exposure: string; ignored: boolean; pkgs: string }>(
     `SELECT s.id, s.root, s.name, s.origin, s.exposure, s.ignored,
@@ -117,6 +120,30 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
             ))}
           </ul>
         ) : <p className="text-sm text-muted">候補はありません。</p>}
+      </Card>
+      <Card title="ファイル改ざん検知（AIDE相当）">
+        {fileBase === 0 ? (
+          <p className="text-sm text-muted">まだベースラインがありません。エージェント 0.1.0 以降が有効なら、次回の報告で確定します（設定で <code>--aide off</code> なら無効）。</p>
+        ) : (
+          <>
+            <p className="text-sm">
+              <b>{fileBase.toLocaleString()}</b> ファイルを監視中
+              {h.file_baseline_at && <span className="text-muted"> ・ ベースライン確定 {new Date(h.file_baseline_at).toISOString().slice(0, 10)}</span>}
+              <span className="text-muted"> ・ 変化は自動でベースラインに反映（自動昇格）</span>
+            </p>
+            {fileChanges.length > 0 ? (
+              <ul className="mt-2 divide-y divide-border text-sm">
+                {fileChanges.map((e, i) => (
+                  <li key={i} className="flex items-center gap-2 py-1.5">
+                    {e.important && <span className="rounded bg-red-600 px-1.5 text-xs text-white">重要</span>}
+                    <span className="min-w-0 flex-1 truncate">{e.title}</span>
+                    <span className="whitespace-nowrap text-xs text-muted">{ago(e.created_at)}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : <p className="mt-2 text-sm text-muted">ベースライン確定後、変化は検出されていません。</p>}
+          </>
+        )}
       </Card>
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title={`待受ポート（${ports.length}）`}>

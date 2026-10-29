@@ -14,6 +14,8 @@ export interface AgentConfig {
   logFiles: string[]; // plain log files to tail ("*" allowed in the last segment)
   useSudo: boolean; // read logs via `sudo -n` when the agent runs as a normal user
   pythonEnvs?: string[]; // shared Python environments to inventory (default: Anaconda/Miniconda envs)
+  aide: boolean; // AIDE-style file-integrity scan (hash watched system paths each run)
+  aidePaths?: string[]; // paths to hash (default: security-relevant system dirs); "*" allowed once
 }
 
 export const DEFAULT_SKIP_DIRS = [
@@ -24,6 +26,13 @@ export const DEFAULT_SKIP_DIRS = [
 export const DEFAULT_LOG_FILES = [
   '/var/log/auth.log', '/var/log/secure', '/var/log/fail2ban.log',
   '/var/log/httpd/*access_log', '/var/log/httpd/*access.log', '/var/log/apache2/*access.log', '/var/log/nginx/*access.log',
+];
+
+// AIDE-style integrity scan: the paths that matter for tamper detection (binaries, system config,
+// privilege/persistence/remote-access). Run as root to read them all; unreadable files are skipped.
+export const DEFAULT_AIDE_PATHS = [
+  '/etc', '/bin', '/sbin', '/usr/bin', '/usr/sbin', '/usr/local/bin', '/usr/local/sbin',
+  '/boot/grub2', '/root/.ssh', '/home/*/.ssh',
 ];
 
 // MINISOC2_HOME lets several agents (or tests) coexist on one machine.
@@ -52,6 +61,8 @@ export function loadConfig(): AgentConfig | null {
     logFiles: c.logFiles ?? DEFAULT_LOG_FILES,
     useSudo: c.useSudo ?? false,
     pythonEnvs: c.pythonEnvs,
+    aide: c.aide ?? true,
+    aidePaths: c.aidePaths,
   };
 }
 

@@ -32,6 +32,7 @@ Usage:
       Send log lines from a file or stdin (e.g. from an application) right now.
   minisoc2-agent config [--scan <dir,dir>] [--skip <name,name>] [--auto-update on|off] [--pin <version>|--unpin]
                        [--log-files <path,glob>] [--journal on|off] [--sudo on|off] [--python-envs <dir,dir/*>]
+                       [--aide on|off] [--aide-paths <dir,dir>]
   minisoc2-agent schedule install|remove|show [--every <hours>]
   minisoc2-agent version
 `;
@@ -103,6 +104,8 @@ async function install(opts: Record<string, string | boolean>) {
     journal: prev?.journal ?? true,
     logFiles: prev?.logFiles ?? DEFAULT_LOG_FILES,
     useSudo: opts.sudo !== undefined ? opts.sudo !== 'off' : prev?.useSudo ?? false,
+    aide: opts.aide !== undefined ? opts.aide !== 'off' : prev?.aide ?? true,
+    aidePaths: prev?.aidePaths,
   });
   // Copy this build to a stable path so the scheduler does not depend on the npx cache.
   mkdirSync(minisoc2Home(), { recursive: true });
@@ -189,6 +192,8 @@ function configure(opts: Record<string, string | boolean>) {
   if (opts.journal !== undefined) cfg.journal = opts.journal !== 'off';
   if (opts.sudo !== undefined) cfg.useSudo = opts.sudo !== 'off';
   if (opts['python-envs'] !== undefined) cfg.pythonEnvs = list(opts['python-envs']) ?? [];
+  if (opts.aide !== undefined) cfg.aide = opts.aide !== 'off';
+  if (opts['aide-paths'] !== undefined) cfg.aidePaths = list(opts['aide-paths']);
   saveConfig(cfg);
   const { hostToken: _t, ...shown } = cfg;
   console.log(JSON.stringify(shown, null, 2));

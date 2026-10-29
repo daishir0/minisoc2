@@ -5,6 +5,8 @@ import { errMsg, readText, run, sha256 } from '../util.js';
 import { DEFAULT_PYTHON_ENVS, collectDeps, expandEnvs } from './deps.js';
 import { linuxServices } from './services.js';
 import { dnfAdvisories, dnfFixed, linuxPackages, linuxPorts, linuxUsers, linuxWatchedFiles, osRelease } from './linux.js';
+import { fileIntegrity } from './integrity.js';
+import { DEFAULT_AIDE_PATHS } from '../config.js';
 
 function hostInfo(): HostInfo {
   const base = { hostname: hostname(), platform: process.platform, kernel: release(), arch: arch(), uptimeSec: Math.round(uptime()) };
@@ -45,6 +47,9 @@ export async function collect(cfg: AgentConfig, agentVersion: string): Promise<R
   const appPkgs = await step('deps', () => collectDeps(cfg.scanPaths, cfg.skipDirs, errors, cfg.pythonEnvs), []);
   const osFixed = await step('osFixed', () => dnfFixed(errors, cfg.useSudo), null);
   const services = await step('services', () => linuxServices(errors), []);
+  const integrity = cfg.aide
+    ? await step('files', () => fileIntegrity({ ...cfg, aidePaths: cfg.aidePaths ?? DEFAULT_AIDE_PATHS }, errors), { files: [], truncated: false })
+    : { files: null as never, truncated: false };
 
   return {
     schema: 1,
@@ -59,6 +64,8 @@ export async function collect(cfg: AgentConfig, agentVersion: string): Promise<R
     osFixed,
     services,
     state,
+    files: cfg.aide ? integrity.files : null,
+    filesTruncated: integrity.truncated,
     errors,
   };
 }

@@ -55,6 +55,14 @@ export interface ServiceInfo {
   execPkg?: string; // OS package that owns bin
 }
 
+// One file in the integrity (AIDE-style) scan: path, sha256, size, mtime (epoch ms).
+export interface FileHash {
+  p: string;
+  h: string;
+  s: number;
+  m: number;
+}
+
 export interface CollectError {
   step: string;
   message: string;
@@ -73,6 +81,8 @@ export interface Report {
   osFixed?: OsAdvisory[] | null; // security advisories already applied (evidence for "not affected")
   services?: ServiceInfo[]; // running services (links applications to runtimes and OS packages)
   state: HostState;
+  files?: FileHash[] | null; // AIDE-style file-integrity scan (null = not collected this run)
+  filesTruncated?: boolean;
   errors: CollectError[];
   update?: { checked: boolean; latest?: string; error?: string };
 }
