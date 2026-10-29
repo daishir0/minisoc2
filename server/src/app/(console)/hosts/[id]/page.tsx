@@ -4,6 +4,7 @@ import { Card, Sev, ago } from '@/components/ui';
 import { q, q1 } from '@/lib/db';
 import type { HostState } from '@/lib/payload';
 import { hostAction, pollPullNow } from '../../actions';
+import { PendingButton } from '@/components/PendingButton';
 
 export default async function HostPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -97,7 +98,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       <Card title={`プロジェクト（登録済み ${registered.length}／未登録の候補 ${candidates.length}）`}
         right={pull ? (
           <form action={pollPullNow}><input type="hidden" name="id" value={h.id} />
-            <button className="btn-ghost text-xs">🔄 サーバーを再スキャンして候補を更新</button>
+            <PendingButton className="btn-ghost text-xs" pendingText="収集中…（十数秒）">🔄 サーバーを再スキャンして候補を更新</PendingButton>
           </form>
         ) : undefined}>
         <p className="mb-3 text-sm text-muted">
@@ -140,7 +141,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
             <dt className="text-muted">最終収集</dt><dd>{ago(pull.last_poll_at)}</dd>
             {pull.last_error && <><dt className="text-red-600">エラー</dt><dd className="break-all text-red-600">{pull.last_error}</dd></>}
           </dl>
-          <form action={pollPullNow} className="mt-3"><input type="hidden" name="id" value={h.id} /><button className="btn-ghost">今すぐ収集</button></form>
+          <form action={pollPullNow} className="mt-3"><input type="hidden" name="id" value={h.id} /><PendingButton className="btn-ghost" pendingText="収集中…（十数秒）">今すぐ収集</PendingButton></form>
         </Card>
       )}
       <Card title="ファイル改ざん検知（AIDE相当）">
