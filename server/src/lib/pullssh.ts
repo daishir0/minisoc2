@@ -60,6 +60,7 @@ getoff() { awk -F'\\t' -v k="$1" '$1==k{print $2; f=1} END{if(!f)print 0}' <<EOF
 ${offs}
 EOF2
 }
+echo '@@HOME@@'; printf '%s\\n' "$HOME"
 echo '@@OSREL@@'; cat /etc/os-release 2>/dev/null; uname -srm 2>/dev/null
 echo '@@RUNTIME@@'
 for c in php python3 python node nodejs ruby perl composer; do v=$(command -v "$c" 2>/dev/null) && printf '%s\\t%s\\n' "$c" "$("$c" --version 2>&1 | head -n1)"; done
@@ -119,7 +120,7 @@ function runRemote(t: PullTarget, script: string, timeoutMs = 180_000): Promise<
 // Only the top-level section headers terminate a section. The LOCKS/LOGS payloads contain their own
 // @@LOCK …@@ / @@ENDLOCK@@ (and @@LOG …@@ / @@ENDLOG@@) markers, which must NOT be treated as the
 // next section, or the section would be cut off at its first block.
-const SECTION_RE = /@@(?:OSREL|RUNTIME|PKG|PORTS|HASH|LOCKS|LOGS|DONE)@@/;
+const SECTION_RE = /@@(?:HOME|OSREL|RUNTIME|PKG|PORTS|HASH|LOCKS|LOGS|DONE)@@/;
 function section(out: string, name: string): string {
   const start = out.indexOf(`@@${name}@@`);
   if (start < 0) return '';
@@ -208,6 +209,10 @@ export async function pollPull(hostId: string): Promise<{ ok: boolean; packages?
     return { ok: false, error: res.stderr || `ssh exit ${res.code}` };
   }
   const out = res.stdout;
+  // The report's package source paths are absolute, so scanPaths must be absolute too (with ~
+  // expanded to the remote home) or the server cannot group packages into per-directory projects.
+  const home = section(out, 'HOME').trim().split('\n')[0] || '';
+  const expand = (p: string) => (home ? p.replace(/^~(?=\/|$)/, home) : p);
   const osrel = Object.fromEntries(section(out, 'OSREL').split('\n').map((l) => l.match(/^([A-Z_]+)=(.*)$/)).filter(Boolean).map((m) => [m![1], m![2].replace(/^"|"$/g, '')]));
   const uname = section(out, 'OSREL').split('\n').find((l) => /\d/.test(l) && !l.includes('='))?.trim() ?? '';
 
@@ -237,7 +242,7 @@ export async function pollPull(hostId: string): Promise<{ ok: boolean; packages?
       osId: osrel.ID ?? 'linux', kernel: uname, arch: uname.split(' ').pop() ?? '', uptimeSec: 0,
     },
     packages: pkgs,
-    scanPaths: t.scan_paths,
+    scanPaths: t.scan_paths.map(expand),
     pythonEnvs: [],
     osAdvisories: null, // no package-manager advisories available without root on shared hosting
     osFixed: null,

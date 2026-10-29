@@ -94,9 +94,15 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           </form>
         </Card>
       </div>
-      <Card title={`プロジェクト（登録済み ${registered.length}／未登録の候補 ${candidates.length}）`}>
+      <Card title={`プロジェクト（登録済み ${registered.length}／未登録の候補 ${candidates.length}）`}
+        right={pull ? (
+          <form action={pollPullNow}><input type="hidden" name="id" value={h.id} />
+            <button className="btn-ghost text-xs">🔄 サーバーを再スキャンして候補を更新</button>
+          </form>
+        ) : undefined}>
         <p className="mb-3 text-sm text-muted">
-          評価（SBOM・脆弱性・改ざん検知）は<b>登録済みプロジェクトだけ</b>に対して行います。未登録の候補はエージェントのスキャンから自動検出したものです。内容を確認して登録してください。
+          評価（SBOM・脆弱性・改ざん検知）は<b>登録済みプロジェクトだけ</b>に対して行います。未登録の候補は{pull ? 'SSH収集' : 'エージェントのスキャン'}から自動検出したものです。内容を確認して登録してください。
+          {pull && <><br />サーバー側でフォルダをアーカイブ・追加した後は、右上の「再スキャン」で候補を最新化できます（接続と収集に十数秒かかります）。</>}
           <Link href={`/systems/new?host=${h.id}`} className="ml-1 text-accent">手動でプロジェクトを追加</Link>
         </p>
         <h3 className="mb-1 text-xs font-semibold text-muted">登録済み</h3>
