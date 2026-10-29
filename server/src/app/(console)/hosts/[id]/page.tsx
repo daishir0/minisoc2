@@ -7,6 +7,10 @@ import type { HostState } from '@/lib/payload';
 import { hostAction, pollPullNow, savePullAide, unregisterSystem } from '../../actions';
 import { PendingButton } from '@/components/PendingButton';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
+import { AgentConfigCard, type AgentConfig } from '@/components/AgentConfigCard';
+import { agentDistDir } from '@/lib/agentdist';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export default async function HostPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -14,8 +18,11 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   const h = await q1<{
     id: string; name: string; hostname: string; platform: string; os_name: string; os_version: string; kernel: string; arch: string;
     agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[]; allowed_ips: string[]; file_baseline_at: Date | null; kind: string;
+    agent_config: AgentConfig | null; agent_meta: { invoke?: string; root?: boolean; home?: string; intervalHours?: number } | null;
   }>('SELECT * FROM hosts WHERE id=$1', [id]);
   if (!h) notFound();
+  let agentLatest = '';
+  try { agentLatest = (JSON.parse(readFileSync(join(agentDistDir(), 'manifest.json'), 'utf8')) as { latest?: string }).latest ?? ''; } catch { /* no manifest */ }
   const pull = h.kind === 'pull'
     ? await q1<{ ssh_host: string; ssh_port: number; ssh_user: string; auth: string; every_hours: number; last_poll_at: Date | null; last_error: string | null; aide_paths: string[]; aide_excludes: string[] }>(
       'SELECT ssh_host, ssh_port, ssh_user, auth, every_hours, last_poll_at, last_error, aide_paths, aide_excludes FROM pull_targets WHERE host_id=$1', [id])
@@ -172,6 +179,12 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
             <dt className="text-muted">状態</dt><dd>{pull.last_error ? <span className="text-red-600">エラー</span> : <span className="text-green-600">正常</span>}</dd>
             {pull.last_error && <><dt className="text-red-600">詳細</dt><dd className="break-all text-red-600">{pull.last_error}</dd></>}
           </dl>
+        </Card>
+      )}
+      {h.kind !== 'pull' && h.agent_config && (
+        <Card title="エージェント設定・操作">
+          <p className="mb-3 text-sm text-muted">エージェントは自律動作し、サーバーからホストへ設定を送ることはありません。現在の設定を表示し、変更・即時収集は<b>SSHでホストに接続して貼り付けるコマンド</b>で行います。</p>
+          <AgentConfigCard cfg={h.agent_config} invoke={h.agent_meta?.invoke ?? ''} root={!!h.agent_meta?.root} version={h.agent_version} latest={agentLatest} intervalHours={h.agent_meta?.intervalHours} />
         </Card>
       )}
       <Card title="ファイル改ざん検知（AIDE相当）">

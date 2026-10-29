@@ -9,7 +9,7 @@ const MARK = '# minisoc2-agent';
 
 // Prefer a stable "node" on PATH that points at the running binary (e.g. /usr/bin/node rather than
 // /usr/bin/node-24) so the schedule survives Node.js upgrades.
-function nodeBinary(): string {
+export function nodeBinary(): string {
   const self = realpathSync(process.execPath);
   for (const dir of (process.env.PATH ?? '').split(delimiter)) {
     const cand = join(dir, 'node');
@@ -57,4 +57,14 @@ export async function scheduleRemove(): Promise<void> {
 export async function scheduleShow(): Promise<void> {
   const line = (await readCrontab()).split('\n').find((l) => l.includes(MARK));
   console.log(line ?? 'not scheduled');
+}
+
+// The current collection interval in hours, parsed from the crontab line ("*/N ..." or a fixed hour).
+export async function scheduleIntervalHours(): Promise<number | undefined> {
+  const line = (await readCrontab()).split('\n').find((l) => l.includes(MARK));
+  if (!line) return undefined;
+  const hourField = line.trim().split(/\s+/)[1] ?? '';
+  const m = hourField.match(/^\*\/(\d+)$/);
+  if (m) return Number(m[1]);
+  return /^\d+$/.test(hourField) ? 24 : undefined;
 }

@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 import { collect } from './collect/index.js';
 import { collectLogs } from './collect/logs.js';
-import { DEFAULT_LOG_FILES, DEFAULT_SKIP_DIRS, loadConfig, minisoc2Home, saveConfig, type AgentConfig } from './config.js';
-import { scheduleInstall, scheduleRemove, scheduleShow } from './schedule.js';
+import { DEFAULT_AIDE_PATHS, DEFAULT_LOG_FILES, DEFAULT_SKIP_DIRS, loadConfig, minisoc2Home, saveConfig, type AgentConfig } from './config.js';
+import { nodeBinary, scheduleInstall, scheduleIntervalHours, scheduleRemove, scheduleShow } from './schedule.js';
 import { checkForUpdate, execBuild, pickBuild, type UpdateResult } from './update.js';
 import type { LogBatch, LogEntry } from './types.js';
 import { errMsg } from './util.js';
@@ -129,6 +129,12 @@ async function runOnce(opts: Record<string, string | boolean>) {
   }
   const report = await collect(cfg, VERSION);
   report.update = update;
+  report.config = {
+    scanPaths: cfg.scanPaths, skipDirs: cfg.skipDirs, aidePaths: cfg.aidePaths ?? DEFAULT_AIDE_PATHS, aideExcludes: cfg.aideExcludes ?? [],
+    logFiles: cfg.logFiles, journal: cfg.journal, useSudo: cfg.useSudo, autoUpdate: cfg.autoUpdate, aide: cfg.aide, pin: cfg.pin,
+  };
+  const target = join(minisoc2Home(), 'minisoc2.mjs');
+  report.agent = { invoke: `"${nodeBinary()}" "${target}"`, root: process.getuid?.() === 0, home: minisoc2Home(), intervalHours: await scheduleIntervalHours() };
   if (opts['dry-run']) {
     console.log(JSON.stringify(report, null, 2));
     return;

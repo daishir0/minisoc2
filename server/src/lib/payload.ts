@@ -86,6 +86,11 @@ export interface Report {
   filesTruncated?: boolean;
   errors: CollectError[];
   update?: { checked: boolean; latest?: string; error?: string };
+  config?: {
+    scanPaths: string[]; skipDirs: string[]; aidePaths: string[]; aideExcludes: string[];
+    logFiles: string[]; journal: boolean; useSudo: boolean; autoUpdate: boolean; aide: boolean; pin?: string;
+  };
+  agent?: { invoke: string; root: boolean; home: string; intervalHours?: number };
 }
 
 // One log line (POST /api/v1/logs). s = source ("journal:sshd.service", "file:/var/log/secure", "app:myapp").

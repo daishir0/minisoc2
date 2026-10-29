@@ -86,6 +86,13 @@ export interface Report {
   filesTruncated?: boolean; // the scan hit its budget and is incomplete
   errors: CollectError[];
   update?: { checked: boolean; latest?: string; error?: string };
+  // effective agent settings (no secrets), so the console can show what is being monitored
+  config?: {
+    scanPaths: string[]; skipDirs: string[]; aidePaths: string[]; aideExcludes: string[];
+    logFiles: string[]; journal: boolean; useSudo: boolean; autoUpdate: boolean; aide: boolean; pin?: string;
+  };
+  // how to run this agent on the host (ready-to-paste command prefix) + run context
+  agent?: { invoke: string; root: boolean; home: string; intervalHours?: number };
 }
 
 // One log line (POST /api/v1/logs). s = source ("journal:sshd.service", "file:/var/log/secure", "app:myapp").
