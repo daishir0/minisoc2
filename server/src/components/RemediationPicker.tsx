@@ -45,6 +45,21 @@ export function RemediationPicker({ host, address, path, system, findings }: {
 
   const sevOrder = (s: string) => ({ critical: 0, high: 1, medium: 2, low: 3 } as Record<string, number>)[s] ?? 4;
   const sorted = [...findings].sort((a, b) => Number(b.kev) - Number(a.kev) || sevOrder(a.severity) - sevOrder(b.severity));
+  // row tint + severity chip by how critical it is (KEV = actively exploited, treated as highest)
+  const tier = (f: PickFinding) => (f.kev ? 'kev' : f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'high' : f.severity === 'medium' ? 'medium' : 'low');
+  const ROW: Record<string, string> = {
+    kev: 'border-l-4 border-red-600 bg-red-50 dark:bg-red-950/40',
+    critical: 'border-l-4 border-red-500 bg-red-50/60 dark:bg-red-950/20',
+    high: 'border-l-4 border-orange-400',
+    medium: 'border-l-4 border-yellow-400',
+    low: 'border-l-4 border-slate-300 dark:border-slate-600',
+  };
+  const CHIP: Record<string, string> = {
+    kev: 'bg-red-600 text-white', critical: 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-200',
+    high: 'bg-orange-100 text-orange-700 dark:bg-orange-950 dark:text-orange-200',
+    medium: 'bg-yellow-100 text-yellow-800 dark:bg-yellow-950 dark:text-yellow-200', low: 'bg-bg text-muted',
+  };
+  const LABEL: Record<string, string> = { kev: 'KEV', critical: '緊急', high: '高', medium: '中', low: '低' };
 
   return (
     <div className="space-y-3">
@@ -52,17 +67,27 @@ export function RemediationPicker({ host, address, path, system, findings }: {
         <span className="text-muted">{sel.size} / {findings.length} 件を選択中</span>
         <button type="button" onClick={() => setAll(true)} className="text-accent hover:underline">すべて選択</button>
         <button type="button" onClick={() => setAll(false)} className="text-accent hover:underline">選択解除</button>
+        <span className="ml-auto flex flex-wrap items-center gap-1.5">
+          <span className="text-muted">凡例：</span>
+          {(['kev', 'critical', 'high', 'medium', 'low'] as const).map((t) => (
+            <span key={t} className={`rounded px-1.5 py-0.5 text-[10px] ${CHIP[t]}`}>{LABEL[t]}</span>
+          ))}
+        </span>
       </div>
       <div className="max-h-64 overflow-y-auto rounded border border-line">
-        <table className="tbl"><thead><tr><th className="w-8"></th><th>CVE</th><th>パッケージ</th><th>現状→修正</th></tr></thead><tbody>
-          {sorted.map((f) => (
-            <tr key={f.id} className="cursor-pointer" onClick={() => toggle(f.id)}>
-              <td><input type="checkbox" checked={sel.has(f.id)} onChange={() => toggle(f.id)} onClick={(e) => e.stopPropagation()} /></td>
-              <td className="whitespace-nowrap font-mono text-xs">{f.kev && <span className="mr-1 rounded bg-red-600 px-1 text-[10px] text-white">KEV</span>}{f.cve}</td>
-              <td className="break-all font-mono text-xs">{f.pkg}</td>
-              <td className="whitespace-nowrap font-mono text-xs text-muted">{f.version.slice(0, 20)}{f.fixed ? ` → ${f.fixed.slice(0, 20)}` : ''}</td>
-            </tr>
-          ))}
+        <table className="tbl"><thead><tr><th className="w-8"></th><th>深刻度</th><th>CVE</th><th>パッケージ</th><th>現状→修正</th></tr></thead><tbody>
+          {sorted.map((f) => {
+            const t = tier(f);
+            return (
+              <tr key={f.id} className={`cursor-pointer ${ROW[t]}`} onClick={() => toggle(f.id)}>
+                <td><input type="checkbox" checked={sel.has(f.id)} onChange={() => toggle(f.id)} onClick={(e) => e.stopPropagation()} /></td>
+                <td><span className={`rounded px-1.5 py-0.5 text-[10px] ${CHIP[t]}`}>{LABEL[t]}</span></td>
+                <td className="whitespace-nowrap font-mono text-xs">{f.cve}</td>
+                <td className="break-all font-mono text-xs">{f.pkg}</td>
+                <td className="whitespace-nowrap font-mono text-xs text-muted">{f.version.slice(0, 20)}{f.fixed ? ` → ${f.fixed.slice(0, 20)}` : ''}</td>
+              </tr>
+            );
+          })}
         </tbody></table>
       </div>
       <div className="flex justify-end">
