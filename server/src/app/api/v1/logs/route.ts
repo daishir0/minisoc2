@@ -1,11 +1,12 @@
-import { BodyError, readJson } from '@/lib/body';
-import { authenticateHost } from '@/lib/ingest';
+import { BodyError, clientIp, readJson } from '@/lib/body';
+import { authenticateHost, hostIpAllowed } from '@/lib/ingest';
 import { ingestLogs } from '@/lib/logs';
 import type { LogBatch } from '@/lib/payload';
 
 export async function POST(req: Request) {
   const host = await authenticateHost(req.headers.get('authorization'));
   if (!host) return Response.json({ error: 'unauthorized' }, { status: 401 });
+  if (!(await hostIpAllowed(host, clientIp(req)))) return Response.json({ error: 'source address not allowed' }, { status: 403 });
   try {
     const b = await readJson<LogBatch>(req);
     if (b.schema !== 1 || !Array.isArray(b.entries)) return Response.json({ error: 'unsupported log schema' }, { status: 400 });

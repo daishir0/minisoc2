@@ -54,6 +54,7 @@ export default async function SettingsPage() {
           <Field label="OSV照合結果のキャッシュ（時間）"><input name="osvCacheHours" type="number" className="input" defaultValue={p.osvCacheHours} /></Field>
           <Field label="生ログの保存期間（日）" hint="ログ監視で使います。集計値は期間に関係なく永続的に保存します。"><input name="logRetentionDays" type="number" className="input" defaultValue={p.logRetentionDays} /></Field>
           <Field label="ログ検知で無視するIP" hint="自分のサーバーや監視サービスのIPなど。スペース・カンマ・改行区切り。"><textarea name="ignoreIps" rows={2} className="input font-mono" defaultValue={(p.ignoreIps ?? []).join('\n')} /></Field>
+          <Field label="既定の許可接続元IP（全ホスト共通）" hint="エージェント/SSHの接続を許可するIP・CIDR（例 203.0.113.0/24）。改行かカンマ区切り。空欄なら制限なし。ホストごとに個別設定した場合はそちらが優先されます。"><textarea name="defaultAllowedIps" rows={2} className="input font-mono" defaultValue={(p.defaultAllowedIps ?? []).join('\n')} placeholder="203.0.113.0/24&#10;2001:db8::/32" /></Field>
           <Field label="ディスク使用率の上限（%）" hint="超えると生ログの保存を一時停止します（ルール判定と集計は続けます）。"><input name="diskGuardPercent" type="number" className="input" defaultValue={p.diskGuardPercent} /></Field>
           <button className="btn">保存</button>
         </ActionForm>

@@ -4,6 +4,8 @@ import { q, q1, tx } from './db';
 import type { HostState, Report } from './payload';
 import { randomToken, safeEqual, sha256hex } from './secrets';
 import { defaultName, excludedBy, globToRegExp, serviceOsPackage, serviceRuntime, serviceSystem, systemOf } from './systems';
+import { ipAllowed } from './ipallow';
+import { getPolicy } from './settings';
 import { recordEvent } from './events';
 
 export interface HostRow {
@@ -14,6 +16,7 @@ export interface HostRow {
   disabled: boolean;
   state: HostState | Record<string, never>;
   system_roots: string[];
+  allowed_ips: string[];
 }
 
 // Host tokens look like "<hostId>.<secret>"; only the hash of the whole token is stored.
@@ -22,9 +25,20 @@ export async function authenticateHost(authHeader: string | null): Promise<HostR
   if (!token) return null;
   const id = token.split('.')[0];
   if (!/^[0-9a-f-]{36}$/.test(id)) return null;
-  const h = await q1<HostRow & { token_hash: string }>('SELECT id, name, hostname, baseline_done, disabled, state, system_roots, token_hash FROM hosts WHERE id=$1', [id]);
+  const h = await q1<HostRow & { token_hash: string }>('SELECT id, name, hostname, baseline_done, disabled, state, system_roots, allowed_ips, token_hash FROM hosts WHERE id=$1', [id]);
   if (!h || h.disabled || !safeEqual(h.token_hash, sha256hex(token))) return null;
   return h;
+}
+
+// A host's own allow list wins; an empty one falls back to the global default. Empty both = allow.
+export async function hostIpAllowed(host: HostRow, ip: string): Promise<boolean> {
+  const list = host.allowed_ips?.length ? host.allowed_ips : (await getPolicy()).defaultAllowedIps;
+  return ipAllowed(ip, list);
+}
+
+// Enrollment has no host yet, so only the global default applies.
+export async function enrollIpAllowed(ip: string): Promise<boolean> {
+  return ipAllowed(ip, (await getPolicy()).defaultAllowedIps);
 }
 
 export async function enroll(token: string, hostname: string, platform: string, agentVersion: string): Promise<{ hostId: string; hostToken: string } | null> {

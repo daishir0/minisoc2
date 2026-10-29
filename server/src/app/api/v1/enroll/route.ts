@@ -1,8 +1,9 @@
 import { BodyError, clientIp, rateLimited, readJson } from '@/lib/body';
-import { enroll } from '@/lib/ingest';
+import { enroll, enrollIpAllowed } from '@/lib/ingest';
 
 export async function POST(req: Request) {
   if (rateLimited(`enroll:${clientIp(req)}`, 10, 10 * 60_000)) return Response.json({ error: 'too many attempts' }, { status: 429 });
+  if (!(await enrollIpAllowed(clientIp(req)))) return Response.json({ error: 'source address not allowed' }, { status: 403 });
   try {
     const b = await readJson<{ token?: string; hostname?: string; platform?: string; agentVersion?: string }>(req);
     if (!b.token) return Response.json({ error: 'token required' }, { status: 400 });

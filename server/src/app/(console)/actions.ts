@@ -10,6 +10,7 @@ import { randomToken, sha256hex } from '@/lib/secrets';
 import { VEX_JUSTIFICATIONS } from '@/lib/vex';
 import { parseTaskKey } from '@/lib/tasks';
 import { encryptPassword, getMail, getPolicy, setSetting, type MailSettings, type PolicySettings } from '@/lib/settings';
+import { parseAllowList } from '@/lib/ipallow';
 
 export type Result = { ok?: string; error?: string; token?: string };
 
@@ -76,10 +77,12 @@ export async function savePolicy(_: Result, fd: FormData): Promise<Result> {
     digestHour: num('digestHour', -1, 23, cur.digestHour ?? 8),
     ignoreIps: String(fd.get('ignoreIps') ?? '').split(/[\s,]+/).map((x) => x.trim()).filter((x) => /^[0-9a-fA-F:.]+$/.test(x)).slice(0, 200),
     osvCacheHours: num('osvCacheHours', 1, 168, cur.osvCacheHours),
+    defaultAllowedIps: parseAllowList(String(fd.get('defaultAllowedIps') ?? '')).ok.slice(0, 200),
   };
   await setSetting('policy', next);
   revalidatePath('/settings');
-  return { ok: '保存しました。' };
+  const bad = parseAllowList(String(fd.get('defaultAllowedIps') ?? '')).bad;
+  return { ok: bad.length ? `保存しました。無効な許可IPは無視しました：${bad.slice(0, 5).join(', ')}` : '保存しました。' };
 }
 
 export async function setAlertStatus(ids: string[], status: 'open' | 'ack' | 'resolved'): Promise<void> {
@@ -138,6 +141,11 @@ export async function hostAction(fd: FormData): Promise<void> {
   const id = String(fd.get('id'));
   const op = String(fd.get('op'));
   if (op === 'rename') await q('UPDATE hosts SET name=$2 WHERE id=$1', [id, String(fd.get('name') ?? '').slice(0, 200) || 'unnamed']);
+  if (op === 'allowips') {
+    const ips = parseAllowList(String(fd.get('allowedIps') ?? '')).ok.slice(0, 200);
+    await q('UPDATE hosts SET allowed_ips=$2 WHERE id=$1', [id, ips]);
+    await opsEvent(`ホストの許可IPを更新（${ips.length ? ips.length + '件' : '制限なし'}）`, id);
+  }
   if (op === 'disable') await q('UPDATE hosts SET disabled=true WHERE id=$1', [id]);
   if (op === 'enable') await q('UPDATE hosts SET disabled=false, needs_match=true WHERE id=$1', [id]);
   if (op === 'rematch') await q('UPDATE hosts SET needs_match=true WHERE id=$1', [id]);
@@ -199,8 +207,11 @@ export async function saveSystem(fd: FormData): Promise<void> {
   let hostId: string;
   let sysId = id;
   if (id) {
+    // Saving via this form registers the project. If it was still auto-detected, reset its baseline
+    // so its first evaluation summarises existing findings once instead of alerting each one.
     const r = await q<{ host_id: string }>(
-      `UPDATE systems SET name=$2, exposure=$3, criticality=$4, url=$5, owner=$6, stack=$7, note=$8, ignored=$9
+      `UPDATE systems SET name=$2, exposure=$3, criticality=$4, url=$5, owner=$6, stack=$7, note=$8, ignored=$9,
+         origin='manual', baselined = CASE WHEN origin='auto' THEN false ELSE baselined END
        WHERE id=$1 RETURNING host_id`,
       [id, ...attrs],
     );
@@ -208,17 +219,18 @@ export async function saveSystem(fd: FormData): Promise<void> {
     hostId = r[0].host_id;
     const root = str('root', 1000);
     if (root && /^(\/|[A-Za-z]:\\)/.test(root)) {
-      await q("UPDATE systems SET root=$2, origin='manual' WHERE id=$1 AND root <> '__os__' AND root <> $2", [id, root.replace(/[\\/]+$/, '')]);
+      await q("UPDATE systems SET root=$2 WHERE id=$1 AND root <> '__os__' AND root <> $2", [id, root.replace(/[\\/]+$/, '')]);
     }
   } else {
     hostId = str('host', 40);
     const root = str('root', 1000).replace(/[\\/]+$/, '');
     if (!/^[0-9a-f-]{36}$/.test(hostId) || !/^(\/|[A-Za-z]:\\)/.test(root)) return;
     const r = await q<{ id: number }>(
-      `INSERT INTO systems(host_id, root, name, exposure, criticality, url, owner, stack, note, ignored, origin)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'manual')
+      `INSERT INTO systems(host_id, root, name, exposure, criticality, url, owner, stack, note, ignored, origin, baselined)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'manual',false)
        ON CONFLICT (host_id, root) DO UPDATE SET origin='manual', name=EXCLUDED.name, exposure=EXCLUDED.exposure, criticality=EXCLUDED.criticality,
-         url=EXCLUDED.url, owner=EXCLUDED.owner, stack=EXCLUDED.stack, note=EXCLUDED.note, ignored=EXCLUDED.ignored
+         url=EXCLUDED.url, owner=EXCLUDED.owner, stack=EXCLUDED.stack, note=EXCLUDED.note, ignored=EXCLUDED.ignored,
+         baselined = CASE WHEN systems.origin='auto' THEN false ELSE systems.baselined END
        RETURNING id`,
       [hostId, root, ...attrs],
     );

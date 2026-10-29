@@ -22,6 +22,7 @@ export interface PolicySettings {
   ignoreIps: string[]; // log rules never alert for these source IPs (monitoring, own servers)
   digestHour: number; // daily summary mail (server time); -1 = off
   osvCacheHours: number;
+  defaultAllowedIps: string[]; // global default allowed source IPs/CIDRs (empty = no restriction)
 }
 
 export const DEFAULT_MAIL: MailSettings = {
@@ -29,7 +30,7 @@ export const DEFAULT_MAIL: MailSettings = {
 };
 
 export const DEFAULT_POLICY: PolicySettings = {
-  notifyMinSeverity: 'critical', notifyKev: true, staleHours: 26, fullRematchHour: 6, logRetentionDays: 30, diskGuardPercent: 90, ignoreIps: [], digestHour: 8, osvCacheHours: 20,
+  notifyMinSeverity: 'critical', notifyKev: true, staleHours: 26, fullRematchHour: 6, logRetentionDays: 30, diskGuardPercent: 90, ignoreIps: [], digestHour: 8, osvCacheHours: 20, defaultAllowedIps: [],
 };
 
 export async function getSetting<T>(key: string, fallback: T): Promise<T> {

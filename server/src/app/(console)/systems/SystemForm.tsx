@@ -66,8 +66,8 @@ export function SystemForm({ v, hosts }: { v: SystemFormValues; hosts?: { id: st
       </Row>
       <div className="md:col-span-2"><Row label="メモ"><textarea name="note" rows={3} className="input" defaultValue={v.note} /></Row></div>
       <div className="flex items-center gap-3 md:col-span-2">
-        <button className="btn">{v.id ? '保存' : '登録'}</button>
-        {v.origin && <span className="text-xs text-muted">{v.origin === 'manual' ? '手動で登録したシステム' : '自動で検出したシステム（保存すると場所を手動で固定できます）'}</span>}
+        <button className="btn">{v.id && v.origin === 'manual' ? '保存' : '登録'}</button>
+        {v.origin && <span className="text-xs text-muted">{v.origin === 'manual' ? '登録済みプロジェクト（評価対象）' : '自動検出された候補です。登録すると評価対象になります（場所と除外パスを確定できます）。'}</span>}
       </div>
     </form>
   );

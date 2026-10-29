@@ -10,9 +10,16 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   if (!/^[0-9a-f-]{36}$/.test(id)) notFound();
   const h = await q1<{
     id: string; name: string; hostname: string; platform: string; os_name: string; os_version: string; kernel: string; arch: string;
-    agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[];
+    agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[]; allowed_ips: string[];
   }>('SELECT * FROM hosts WHERE id=$1', [id]);
   if (!h) notFound();
+  // Projects on this host: registered (manual) are evaluated; auto-detected are approval candidates.
+  const projects = await q<{ id: number; root: string; name: string; origin: string; exposure: string; ignored: boolean; pkgs: string }>(
+    `SELECT s.id, s.root, s.name, s.origin, s.exposure, s.ignored,
+       (SELECT count(*) FROM host_packages p WHERE p.host_id=s.host_id AND s.root = ANY(p.systems)) AS pkgs
+     FROM systems s WHERE s.host_id=$1 AND s.root <> '__os__' ORDER BY (s.origin='manual') DESC, s.name`, [id]);
+  const registered = projects.filter((p) => p.origin === 'manual');
+  const candidates = projects.filter((p) => p.origin !== 'manual');
   const sev = await q<{ severity: string; n: string }>("SELECT severity, count(*) AS n FROM findings WHERE host_id=$1 AND status='open' GROUP BY severity", [id]);
   const eco = await q<{ ecosystem: string; n: string }>('SELECT ecosystem, count(*) AS n FROM host_packages WHERE host_id=$1 GROUP BY ecosystem ORDER BY 2 DESC', [id]);
   const reports = await q<{ received_at: Date; agent_version: string; duration_ms: number; package_count: number; advisory_count: number | null; errors: { step: string; message: string }[]; update_info: { error?: string } | null }>(
@@ -67,14 +74,49 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
             <form action={hostAction}><input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="rematch" /><button className="btn-ghost">今すぐ再照合</button></form>
             <form action={hostAction}><input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value={h.disabled ? 'enable' : 'disable'} /><button className="btn-ghost">{h.disabled ? '有効にする' : '無効にする（報告を拒否）'}</button></form>
           </div>
+          <form action={hostAction} className="mt-3 space-y-1">
+            <input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="allowips" />
+            <span className="block text-xs text-muted">許可する接続元IP（空欄=制限なし。設定すると既定より優先。例 203.0.113.0/24、改行区切り）</span>
+            <textarea className="input font-mono text-xs" name="allowedIps" rows={2} defaultValue={(h.allowed_ips ?? []).join('\n')} placeholder="203.0.113.0/24" />
+            <button className="btn-ghost">許可IPを保存</button>
+          </form>
           <form action={hostAction} className="mt-3 flex gap-2">
             <input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="delete" />
             <input className="input" name="confirm" placeholder='確認のため delete と入力' /><button className="btn-ghost text-red-600">ホストを削除</button>
           </form>
         </Card>
       </div>
-      <Card title="システム">
-        <p className="text-sm text-muted">このホストの開発システムは<Link href="/systems" className="mx-1 text-accent">システム画面</Link>で確認・登録できます。</p>
+      <Card title={`プロジェクト（登録済み ${registered.length}／未登録の候補 ${candidates.length}）`}>
+        <p className="mb-3 text-sm text-muted">
+          評価（SBOM・脆弱性・改ざん検知）は<b>登録済みプロジェクトだけ</b>に対して行います。未登録の候補はエージェントのスキャンから自動検出したものです。内容を確認して登録してください。
+          <Link href={`/systems/new?host=${h.id}`} className="ml-1 text-accent">手動でプロジェクトを追加</Link>
+        </p>
+        <h3 className="mb-1 text-xs font-semibold text-muted">登録済み</h3>
+        {registered.length ? (
+          <ul className="mb-4 divide-y divide-border text-sm">
+            {registered.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-2 py-1.5">
+                <Link href={`/systems/${p.id}`} className="font-medium text-accent">{p.name}</Link>
+                {p.ignored && <span className="rounded bg-slate-500 px-1.5 text-xs text-white">除外中</span>}
+                <span className="font-mono text-xs text-muted">{p.root}</span>
+                <span className="ml-auto text-xs text-muted">{p.pkgs} パッケージ</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="mb-4 text-sm text-muted">まだ登録済みプロジェクトはありません。</p>}
+        <h3 className="mb-1 text-xs font-semibold text-muted">未登録の候補</h3>
+        {candidates.length ? (
+          <ul className="divide-y divide-border text-sm">
+            {candidates.map((p) => (
+              <li key={p.id} className="flex flex-wrap items-center gap-2 py-1.5">
+                <span className="font-medium">{p.name}</span>
+                <span className="font-mono text-xs text-muted">{p.root}</span>
+                <span className="ml-auto text-xs text-muted">{p.pkgs} パッケージ</span>
+                <Link href={`/systems/${p.id}`} className="btn-ghost">内容を見て登録</Link>
+              </li>
+            ))}
+          </ul>
+        ) : <p className="text-sm text-muted">候補はありません。</p>}
       </Card>
       <div className="grid gap-6 lg:grid-cols-2">
         <Card title={`待受ポート（${ports.length}）`}>
