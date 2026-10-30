@@ -129,6 +129,16 @@ export async function savePullAide(fd: FormData): Promise<void> {
   revalidatePath(`/hosts/${id}`);
 }
 
+// Queue an on-demand collection for a push host; its next check-in (within a few minutes) runs it.
+export async function requestCollect(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = String(fd.get('id'));
+  if (!/^[0-9a-f-]{36}$/.test(id)) return;
+  await q("UPDATE hosts SET collect_requested=true WHERE id=$1 AND kind<>'pull'", [id]);
+  await opsEvent('今すぐ収集を要求（次回チェックインで実行）', id);
+  revalidatePath(`/hosts/${id}`);
+}
+
 export async function pollPullNow(fd: FormData): Promise<void> {
   await requireUser();
   const id = String(fd.get('id'));

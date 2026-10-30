@@ -4,7 +4,7 @@ import { Card, Sev, ago } from '@/components/ui';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q, q1 } from '@/lib/db';
 import type { HostState } from '@/lib/payload';
-import { hostAction, pollPullNow, savePullAide, unregisterSystem } from '../../actions';
+import { hostAction, pollPullNow, requestCollect, savePullAide, unregisterSystem } from '../../actions';
 import { PendingButton } from '@/components/PendingButton';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { AgentConfigCard, type AgentConfig } from '@/components/AgentConfigCard';
@@ -19,6 +19,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
     id: string; name: string; hostname: string; platform: string; os_name: string; os_version: string; kernel: string; arch: string;
     agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[]; allowed_ips: string[]; file_baseline_at: Date | null; kind: string;
     agent_config: AgentConfig | null; agent_meta: { invoke?: string; root?: boolean; home?: string; intervalHours?: number } | null;
+    collect_requested: boolean; last_checkin_at: Date | null;
   }>('SELECT * FROM hosts WHERE id=$1', [id]);
   if (!h) notFound();
   let agentLatest = '';
@@ -181,9 +182,20 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           </dl>
         </Card>
       )}
+      {h.kind !== 'pull' && (
+        <Card title="今すぐ収集を要求">
+          <p className="mb-2 text-sm text-muted">
+            定期収集を待たずに収集させます。サーバーから命令はせず、<b>エージェントが数分おきの軽量チェックインで要求を受け取り</b>、1回だけフル収集して送信します（inboundなし・常駐なし）。
+          </p>
+          <form action={requestCollect}><input type="hidden" name="id" value={h.id} /><PendingButton className="btn" pendingText="要求中…">今すぐ収集を要求</PendingButton></form>
+          <p className="mt-2 text-xs text-muted">
+            {h.collect_requested ? '⏳ 収集を要求済み。次回チェックインで実行されます。' : '状態：待機中'} ・ 最終チェックイン {h.last_checkin_at ? ago(h.last_checkin_at) : '未（エージェント 0.1.5 以降で対応）'}
+          </p>
+        </Card>
+      )}
       {h.kind !== 'pull' && h.agent_config && (
         <Card title="エージェント設定・操作">
-          <p className="mb-3 text-sm text-muted">エージェントは自律動作し、サーバーからホストへ設定を送ることはありません。現在の設定を表示し、変更・即時収集は<b>SSHでホストに接続して貼り付けるコマンド</b>で行います。</p>
+          <p className="mb-3 text-sm text-muted">エージェントは自律動作し、サーバーからホストへ設定を送ることはありません。現在の設定を表示し、変更・即時収集は<b>SSHでホストに接続して貼り付けるコマンド</b>でも行えます。</p>
           <AgentConfigCard cfg={h.agent_config} invoke={h.agent_meta?.invoke ?? ''} root={!!h.agent_meta?.root} version={h.agent_version} latest={agentLatest} intervalHours={h.agent_meta?.intervalHours} />
         </Card>
       )}

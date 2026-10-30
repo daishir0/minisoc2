@@ -6,7 +6,7 @@ import { gzipSync } from 'node:zlib';
 import { collect } from './collect/index.js';
 import { collectLogs } from './collect/logs.js';
 import { DEFAULT_AIDE_PATHS, DEFAULT_LOG_FILES, DEFAULT_SKIP_DIRS, loadConfig, minisoc2Home, saveConfig, type AgentConfig } from './config.js';
-import { nodeBinary, scheduleInstall, scheduleIntervalHours, scheduleRemove, scheduleShow } from './schedule.js';
+import { ensureCheckin, nodeBinary, scheduleInstall, scheduleIntervalHours, scheduleRemove, scheduleShow } from './schedule.js';
 import { checkForUpdate, execBuild, pickBuild, type UpdateResult } from './update.js';
 import type { LogBatch, LogEntry } from './types.js';
 import { errMsg } from './util.js';
@@ -28,6 +28,8 @@ Usage:
       Register this host, copy the agent to ${'~/.minisoc2'}, and schedule periodic runs.
   minisoc2-agent run [--no-update] [--dry-run]
       Collect and report once (what the scheduler calls). --dry-run prints the report instead of sending.
+  minisoc2-agent checkin
+      Cheap poll (runs often): collect only if the server requested an on-demand collection.
   minisoc2-agent send-log --source <name> [--file <path>]
       Send log lines from a file or stdin (e.g. from an application) right now.
   minisoc2-agent config [--scan <dir,dir>] [--skip <name,name>] [--auto-update on|off] [--pin <version>|--unpin]
@@ -119,6 +121,27 @@ async function install(opts: Record<string, string | boolean>) {
   await runOnce({ 'no-update': true });
 }
 
+// Cheap check-in for on-demand collection: ask the server if a collection was requested; if so, run
+// a full report. Called frequently by cron, so it does almost nothing in the common (no-request) case.
+async function pendingCheck(cfg: AgentConfig): Promise<boolean> {
+  try {
+    const res = await fetch(`${cfg.server}/api/v1/pending`, { headers: { authorization: `Bearer ${cfg.hostToken}` } });
+    if (!res.ok) return false;
+    const j = (await res.json().catch(() => ({}))) as { collect?: boolean };
+    return !!j.collect;
+  } catch {
+    return false;
+  }
+}
+
+async function checkin() {
+  const cfg = requireConfig();
+  if (await pendingCheck(cfg)) {
+    console.log('on-demand collection requested');
+    await runOnce({});
+  }
+}
+
 async function runOnce(opts: Record<string, string | boolean>) {
   const cfg = requireConfig();
   let update: UpdateResult = process.env.MINISOC2_UPDATE_INFO ? JSON.parse(process.env.MINISOC2_UPDATE_INFO) : { checked: false };
@@ -156,6 +179,8 @@ async function runOnce(opts: Record<string, string | boolean>) {
     console.log(`logs: ${logs.entries.length} lines (${Math.round(logs.bytes / 1024)} KiB)${logs.truncated ? ', truncated at the per-run limit' : ''}`);
   }
   logs.commit();
+  // self-heal: ensure the frequent check-in cron exists (hosts updated from an older build get it)
+  await ensureCheckin(join(minisoc2Home(), 'minisoc2.mjs'));
 }
 
 // Uploads in chunks; throws on the first failure so the caller does not commit log positions.
@@ -221,6 +246,8 @@ async function main() {
       return install(opts);
     case 'run':
       return runOnce(opts);
+    case 'checkin':
+      return checkin();
     case 'config':
       return configure(opts);
     case 'send-log':
