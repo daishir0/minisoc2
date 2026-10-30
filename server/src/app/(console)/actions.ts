@@ -338,6 +338,19 @@ export async function saveSystem(fd: FormData): Promise<void> {
   redirect(`/systems/${sysId}?saved=1`);
 }
 
+// Quick-register an auto-detected candidate as a monitored project, in place (no detail page needed).
+// Resets its baseline so the first evaluation summarises existing findings once instead of alerting each.
+export async function registerSystem(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = Number(fd.get('id'));
+  const r = await q<{ host_id: string; name: string }>("UPDATE systems SET origin='manual', baselined=false WHERE id=$1 AND origin='auto' AND root <> '__os__' RETURNING host_id, name", [id]);
+  if (r[0]) {
+    await q('UPDATE hosts SET needs_match=true WHERE id=$1', [r[0].host_id]);
+    await opsEvent(`プロジェクト「${r[0].name}」を登録（監視対象に追加）`, r[0].host_id);
+    revalidatePath(`/hosts/${r[0].host_id}`);
+  }
+}
+
 // Remove a project from monitoring: revert it to an auto-detected candidate (keeps its settings
 // such as excludes/exposure, but it is no longer evaluated). Its open findings resolve on re-match.
 export async function unregisterSystem(fd: FormData): Promise<void> {

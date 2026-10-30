@@ -4,7 +4,7 @@ import { Card, Sev, ago } from '@/components/ui';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q, q1 } from '@/lib/db';
 import type { HostState } from '@/lib/payload';
-import { hostAction, pollPullNow, requestCollect, savePullAide, unregisterSystem } from '../../actions';
+import { hostAction, pollPullNow, registerSystem, requestCollect, savePullAide, unregisterSystem } from '../../actions';
 import { PendingButton } from '@/components/PendingButton';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { AgentConfigCard, type AgentConfig } from '@/components/AgentConfigCard';
@@ -162,7 +162,8 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
                 <span className="font-medium">{p.name}</span>
                 <span className="font-mono text-xs text-muted">{p.root}</span>
                 <span className="ml-auto text-xs text-muted">{p.pkgs} パッケージ</span>
-                <Link href={`/systems/${p.id}`} className="btn-ghost">内容を見て登録</Link>
+                <Link href={`/systems/${p.id}`} className="btn-ghost">詳細</Link>
+                <form action={registerSystem}><input type="hidden" name="id" value={p.id} /><PendingButton className="btn" pendingText="登録中…">登録</PendingButton></form>
               </li>
             ))}
           </ul>
