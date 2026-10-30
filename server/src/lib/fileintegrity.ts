@@ -5,7 +5,7 @@
 // "missing" files, so a partial run cannot look like mass removal.
 import { raiseAlert } from './alerts';
 import { recordEvent } from './events';
-import { q, tx } from './db';
+import { q, q1, tx } from './db';
 import type { FileHash } from './payload';
 
 type Sev = 'critical' | 'high' | 'medium' | 'low';
@@ -34,6 +34,9 @@ export async function ingestFiles(
     (await q<{ path: string; sha: string }>('SELECT path, sha FROM host_file_baseline WHERE host_id=$1', [host.id])).map((r) => [r.path, r.sha]),
   );
   const firstBaseline = base.size === 0;
+  // Until a non-truncated scan has arrived the baseline is still converging: a file "first seen" is
+  // a pre-existing file the earlier (budget-limited) scan had not reached, not a real addition.
+  const complete = !firstBaseline && !!(await q1<{ c: boolean }>('SELECT file_baseline_complete AS c FROM hosts WHERE id=$1', [host.id]))?.c;
 
   const reported = new Map<string, FileHash>();
   for (const f of files) {
@@ -45,7 +48,7 @@ export async function ingestFiles(
   if (!firstBaseline) {
     for (const [p, f] of reported) {
       const prev = base.get(p);
-      if (prev === undefined) changes.push({ path: p, kind: 'added', sev: pathSeverity(p) });
+      if (prev === undefined) { if (complete) changes.push({ path: p, kind: 'added', sev: pathSeverity(p) }); } // else: converging, absorb quietly
       else if (prev !== f.h) changes.push({ path: p, kind: 'changed', sev: pathSeverity(p) });
     }
     if (!truncated) {
@@ -72,12 +75,27 @@ export async function ingestFiles(
       }
     }
     if (firstBaseline) await c.query('UPDATE hosts SET file_baseline_at=now() WHERE id=$1', [host.id]);
+    // a non-truncated scan means every configured path was reached: the baseline is now complete
+    if (!truncated) await c.query('UPDATE hosts SET file_baseline_complete=true WHERE id=$1 AND NOT file_baseline_complete', [host.id]);
   });
 
   if (firstBaseline) {
     await recordEvent({ hostId: host.id, kind: 'host_state', important: false, count: reported.size,
-      title: `${host.name}：ファイル改ざん検知のベースラインを確定（${reported.size}ファイル）` });
+      title: `${host.name}：ファイル改ざん検知のベースラインを確定（${reported.size}ファイル${truncated ? '・収集中' : ''}）` });
     return;
+  }
+
+  // Persistent truncation = a real coverage gap (files never scanned), not just slow convergence.
+  if (truncated) {
+    const old = await q1<{ old: boolean }>("SELECT file_baseline_at < now() - interval '6 hours' AS old FROM hosts WHERE id=$1", [host.id]);
+    if (old?.old) {
+      await raiseAlert({
+        kind: 'agent', severity: 'high', hostId: host.id,
+        title: `[${host.name}] ファイル改ざん検知のスキャンが打ち切られ続けています（一部が監視対象外）`,
+        detail: '監視対象ディレクトリが大きすぎてスキャンが上限に達しています。大きなデータ/ログのディレクトリを監視対象から外す（除外設定）か、監視パスを絞ってください。このままでは打ち切られた範囲の改ざんを検知できません。',
+        dedupeKey: `file-coverage:${host.id}:${new Date().toISOString().slice(0, 10)}`,
+      });
+    }
   }
   if (!changes.length) return;
 

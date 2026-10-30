@@ -10,9 +10,12 @@ import { DEFAULT_AIDE_PATHS, minisoc2Home, type AgentConfig } from '../config.js
 import type { CollectError, FileHash } from '../types.js';
 
 const MAX_FILES = 60_000;
-const MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024; // stop hashing after ~2 GB of reads in one run
-const MAX_FILE_BYTES = 200 * 1024 * 1024; // files larger than this are tracked by size+mtime only
-const MAX_MS = 180_000;
+// A last-resort guard so a pathological tree cannot hang a run; after the first (uncached) scan the
+// size+mtime cache makes steady-state runs cheap, so normal system paths complete well under these.
+// Hitting the limit leaves the baseline incomplete, which the server surfaces as a coverage alert.
+const MAX_TOTAL_BYTES = 24 * 1024 * 1024 * 1024; // ~24 GB of reads in one run
+const MAX_FILE_BYTES = 500 * 1024 * 1024; // files larger than this are tracked by size+mtime only
+const MAX_MS = 600_000; // 10 min cap (mostly only the first, uncached scan approaches this)
 
 type CacheEntry = { s: number; m: number; h: string };
 

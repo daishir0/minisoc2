@@ -31,9 +31,11 @@ export const DEFAULT_LOG_FILES = [
 
 // AIDE-style integrity scan: the paths that matter for tamper detection (binaries, system config,
 // privilege/persistence/remote-access). Run as root to read them all; unreadable files are skipped.
+// Order matters: small, security-critical paths first, so they are baselined even if a budget-
+// limited first scan does not reach the large binary trees.
 export const DEFAULT_AIDE_PATHS = [
-  '/etc', '/bin', '/sbin', '/usr/bin', '/usr/sbin', '/usr/local/bin', '/usr/local/sbin',
-  '/boot/grub2', '/root/.ssh', '/home/*/.ssh',
+  '/root/.ssh', '/home/*/.ssh', '/etc', '/boot/grub2',
+  '/bin', '/sbin', '/usr/bin', '/usr/sbin', '/usr/local/bin', '/usr/local/sbin',
 ];
 
 // MINISOC2_HOME lets several agents (or tests) coexist on one machine.
