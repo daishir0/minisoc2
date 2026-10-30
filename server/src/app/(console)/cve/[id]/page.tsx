@@ -11,6 +11,7 @@ const STATE: Record<HostState, { icon: string; label: string; cls: string }> = {
   fixed: { icon: '🟢', label: '影響なし（修正済み・対象外）', cls: 'text-green-600' },
   not_present: { icon: '🟢', label: '影響なし（対象ソフトなし）', cls: 'text-green-600' },
   vex: { icon: '🟢', label: '影響なし（判断済み）', cls: 'text-green-600' },
+  potential: { icon: '🟠', label: '要確認（勧告待ち）', cls: 'text-orange-600' },
   unknown: { icon: '⚪', label: '判定できない', cls: 'text-muted' },
 };
 

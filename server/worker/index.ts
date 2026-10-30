@@ -8,6 +8,7 @@ import { statfs } from 'node:fs/promises';
 import { syncKev } from '../src/lib/feeds';
 import { syncSigma } from '../src/lib/sigma';
 import { pollPull } from '../src/lib/pullssh';
+import { lookupCve } from '../src/lib/cvelookup';
 import { dropOldPartitions, ensurePartition } from '../src/lib/logs';
 import { matchHost } from '../src/lib/match';
 import { recordEvent } from '../src/lib/events';
@@ -64,6 +65,31 @@ async function pollPullHosts() {
       log(`pull ${d.name}: ${r.ok ? `packages=${r.packages} logs=${r.logs}` : `failed: ${r.error}`}`);
     } catch (e) {
       log(`pull ${d.name} failed: ${errMsg(e)}`);
+    }
+  }
+}
+
+// Watched CVEs: re-check each against distro/advisory data (fast path, ahead of NVD) and alert the
+// moment a host is confirmed affected — including OS/kernel CVEs that only distro trackers map.
+async function watchCveAlerts() {
+  const cves = await q<{ cve: string }>('SELECT cve FROM watch_cves');
+  for (const { cve } of cves) {
+    try {
+      const v = await lookupCve(cve);
+      const crit = (v.external.nvd?.score ?? 0) >= 9 || v.external.nvd?.severity === 'critical';
+      for (const h of v.hosts) {
+        if (h.state !== 'affected') continue;
+        if (await raiseAlert({
+          kind: 'watch', severity: crit ? 'critical' : 'high', hostId: h.hostId,
+          title: `[${h.host}] 監視中の ${cve} に影響あり（配布元勧告で確認）`,
+          detail: h.reasons.slice(0, 3).join('\n'),
+          dedupeKey: `watch-distro:${cve}:${h.hostId}`,
+        })) {
+          await recordEvent({ hostId: h.hostId, kind: 'vuln_new', important: true, title: `${h.host}：監視中の ${cve} に影響あり（配布元勧告）` });
+        }
+      }
+    } catch (e) {
+      log(`watch lookup ${cve} failed: ${errMsg(e)}`);
     }
   }
 }
@@ -196,6 +222,7 @@ async function tick(n: number) {
     ['staleHosts', staleHosts, 5],
     ['feeds', feeds, 10],
     ['sigmaSync', sigmaSync, 60],
+    ['watchCveAlerts', watchCveAlerts, 30],
     ['pollPullHosts', pollPullHosts, 5],
     ['dailyRematch', dailyRematch, 10],
     ['notify', async () => {

@@ -5,13 +5,18 @@
 //   vex          : someone marked it "not affected" with a justification
 //   unknown      : no data source says anything about this CVE for the host (shown honestly, never as safe)
 import { q, q1 } from './db';
+import { classifyComponent, fetchUbuntuCve, ubuntuVerdict, UBUNTU_CODENAME, type UbuntuCve } from './distro';
 
-export type HostState = 'affected' | 'fixed' | 'not_present' | 'vex' | 'unknown';
+//   potential : no advisory maps it yet, but the CVE's component is plainly in use (e.g. a kernel CVE
+//               on a host running that kernel) — flagged for review, auto-upgrades to affected when a
+//               distro advisory lands.
+export type HostState = 'affected' | 'fixed' | 'not_present' | 'vex' | 'unknown' | 'potential';
 
 export interface External {
   fetchedAt: string;
   nvd: { description: string; score: number | null; severity: string | null; published: string | null; status: string | null; products: string[] } | null;
   ghsa: { id: string; summary: string; severity: string; packages: { ecosystem: string; name: string; range: string; patched: string | null }[] }[];
+  distro?: { ubuntu: UbuntuCve | null } | null;
   errors: string[];
 }
 
@@ -93,11 +98,14 @@ async function fetchJson(url: string, headers: Record<string, string> = {}): Pro
 }
 
 export async function fetchExternal(cve: string): Promise<External> {
-  const ext: External = { fetchedAt: new Date().toISOString(), nvd: null, ghsa: [], errors: [] };
-  const [nvd, gh] = await Promise.allSettled([
+  const ext: External = { fetchedAt: new Date().toISOString(), nvd: null, ghsa: [], distro: { ubuntu: null }, errors: [] };
+  const [nvd, gh, ubuntu] = await Promise.allSettled([
     fetchJson(`https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=${cve}`, process.env.NVD_API_KEY ? { apiKey: process.env.NVD_API_KEY } : {}),
     fetchJson(`https://api.github.com/advisories?cve_id=${cve}&per_page=20`, process.env.GITHUB_TOKEN ? { authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}),
+    fetchUbuntuCve(cve),
   ]);
+  if (ubuntu.status === 'fulfilled') ext.distro = { ubuntu: ubuntu.value };
+  else ext.errors.push(`Ubuntu Security: ${String(ubuntu.reason)}`);
   if (nvd.status === 'fulfilled' && nvd.value.status === 200) {
     type NvdCve = {
       descriptions?: { lang: string; value: string }[]; published?: string; vulnStatus?: string;
@@ -189,6 +197,27 @@ export async function lookupCve(cve: string, refresh = false): Promise<Verdict> 
   const kev = await q1<{ name: string; date_added: string }>("SELECT name, to_char(date_added, 'YYYY-MM-DD') AS date_added FROM kev WHERE cve=$1", [cve]);
   const watched = !!(await q1('SELECT 1 FROM watch_cves WHERE cve=$1', [cve]));
 
+  // Distro advisory (Ubuntu): maps the CVE to OS/kernel packages per release, long before NVD.
+  const ub = external.distro?.ubuntu ?? null;
+  const ubReasons = new Map<string, { red: string[]; green: string[]; matched: boolean }>();
+  const ubHosts = hosts.filter((h) => h.os_id === 'ubuntu');
+  if (ub && ub.pkgs.length && ubHosts.length) {
+    const names = [...new Set(ub.pkgs.map((p) => p.name))];
+    const rows = await q<{ host_id: string; name: string; version: string }>(
+      `SELECT host_id, name, version FROM host_packages WHERE host_id = ANY($1) AND ecosystem LIKE 'Ubuntu:%' AND (name = ANY($2) OR name LIKE 'linux-%')`,
+      [ubHosts.map((h) => h.id), names]);
+    const byHost = new Map<string, { name: string; version: string }[]>();
+    for (const r of rows) byHost.set(r.host_id, [...(byHost.get(r.host_id) ?? []), { name: r.name, version: r.version }]);
+    for (const h of ubHosts) {
+      const codename = UBUNTU_CODENAME[h.os_version] ?? '';
+      if (codename) ubReasons.set(h.id, ubuntuVerdict(codename, byHost.get(h.id) ?? [], ub));
+    }
+  }
+  // provisional triage (source C): hosts running a kernel, for a kernel CVE with no mapping yet
+  const kernelHosts = classifyComponent(external.nvd?.description ?? '') === 'kernel'
+    ? new Set((await q<{ host_id: string }>("SELECT DISTINCT host_id FROM host_packages WHERE name LIKE 'linux-image%' OR name ~ '^kernel($|-)'")).map((r) => r.host_id))
+    : new Set<string>();
+
   const verdicts: HostVerdict[] = hosts.map((h) => {
     const red: string[] = [];
     const green: string[] = [];
@@ -220,6 +249,10 @@ export async function lookupCve(cve: string, refresh = false): Promise<Verdict> 
       if (!red.some((r) => r.includes(` ${f.pkg} `))) red.push(`${f.pkg} ${f.version.slice(0, 60)} が該当${f.fixed ? `（修正版 ${f.fixed}）` : ''}`);
     }
     void reported;
+    // distro (Ubuntu) advisory evidence
+    const uv = ubReasons.get(h.id);
+    let distroMatched = false;
+    if (uv) { red.push(...uv.red); green.push(...uv.green); distroMatched = uv.matched; }
     const reasons: string[] = [];
     let state: HostState;
     if (red.length) {
@@ -235,9 +268,14 @@ export async function lookupCve(cve: string, refresh = false): Promise<Verdict> 
       state = 'not_present';
       reasons.push(`対象パッケージ（${[...new Set(ghsaPkgs.map((p) => `${p.ecosystem} ${p.name}`))].slice(0, 5).join('、')}）は入っていません`);
       if (h.os_id === 'amzn' || h.has_fixed) reasons.push('OSのセキュリティ情報にもこのCVEはありません');
+    } else if (kernelHosts.has(h.id)) {
+      // provisional: a kernel CVE and this host runs a kernel, but no advisory maps it yet
+      state = 'potential';
+      reasons.push('Linuxカーネルの脆弱性で、このホストはカーネルを使用中です。まだ配布元の勧告がパッケージに紐づいていないため「要確認（勧告待ち）」です。勧告が出れば自動的に「影響あり」に変わり通知します。');
     } else {
       state = 'unknown';
-      if (h.has_fixed) reasons.push('OSのセキュリティ情報（適用済み・未適用）にこのCVEはありません。OSの配布元が未収載か、対象ソフトがOSのパッケージではない可能性があります');
+      if (distroMatched) reasons.push('配布元（Ubuntu）の勧告では、このリリースの該当パッケージは「影響なし」扱いです');
+      else if (h.has_fixed) reasons.push('OSのセキュリティ情報（適用済み・未適用）にこのCVEはありません。OSの配布元が未収載か、対象ソフトがOSのパッケージではない可能性があります');
       else reasons.push(`${h.os_name || 'このOS'}では「適用済みの修正」の一覧を取得できないため、OSの観点では判定できません`);
       if (!external.ghsa.length) reasons.push('アプリ依存の脆弱性データベース（GitHub Advisory）に登録がありません');
       else if (!ghsaPkgs.length) reasons.push('GitHub Advisory に登録はありますが、対象パッケージの情報がありません');
@@ -245,7 +283,8 @@ export async function lookupCve(cve: string, refresh = false): Promise<Verdict> 
     return { hostId: h.id, host: h.name, os: `${h.os_name} ${h.os_version}`.trim(), state, reasons };
   });
 
-  const overall = verdicts.some((v) => v.state === 'affected') ? 'affected' : verdicts.length && verdicts.every((v) => v.state !== 'unknown') ? 'clear' : 'unknown';
+  const overall = verdicts.some((v) => v.state === 'affected') ? 'affected'
+    : verdicts.length && verdicts.every((v) => v.state !== 'unknown' && v.state !== 'potential') ? 'clear' : 'unknown';
   return { cve, overall, hosts: verdicts, external, kev, watched };
 }
 
