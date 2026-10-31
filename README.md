@@ -1,12 +1,12 @@
 # minisoc2
 
-> minisoc2 is the next generation of minisoc: an AI-era defense system for **Linux servers only** (Amazon Linux 2023, Ubuntu, and other RPM/dpkg/apk distros). On top of SBOM/CVE/log monitoring it adds server-side AIDE-style file-integrity detection, Sigma log threat detection, pull-type (read-only SSH) registration for agent-less hosts, admin TOTP 2FA, per-host allowed-IP lists, and copy-paste Claude Code remediation prompts. Every host is accessed read-only; the server never writes to a host or runs commands on it. Windows/macOS are out of scope.
+> minisoc2 is the next generation of minisoc: an AI-era defense system for **Linux servers only** (Amazon Linux 2023, Ubuntu, and other RPM/dpkg/apk distros). On top of SBOM/CVE/log monitoring it adds server-side AIDE-style file-integrity detection, Sigma log threat detection, pull-type (read-only SSH) registration for agent-less hosts, admin TOTP 2FA, per-host allowed-IP lists, a real-time control channel for on-demand collection, a per-host patch-history timeline, and copy-paste Claude Code remediation prompts. Every host is accessed read-only; the server never writes to a host or runs commands on it. Windows/macOS are out of scope.
 
 ## Overview
-minisoc2 is a lightweight, self-hosted SOC (security operations center) for a handful to a few hundred Linux servers. Every host is accessed **read-only** â the server can never push commands or writes to a host.
+minisoc2 is a lightweight, self-hosted SOC (security operations center) for a handful to a few hundred Linux servers. Every host is accessed **read-only** — the server can never push commands or writes to a host.
 
-- **Agent** (`agent/`): a single dependency-free Node.js file. A scheduler (cron) runs it; it collects installed packages, pending OS security updates and host state, reports to the server and exits. Nothing stays resident and the server can never send commands to hosts.
-- **Server** (`server/`): Next.js + PostgreSQL web console and API, plus a worker that syncs vulnerability feeds, matches every host's inventory, and emails alerts.
+- **Agent** (`agent/`): a single dependency-free Node.js file. A scheduler (cron) runs it; it collects installed packages, pending OS security updates and host state, reports to the server and exits. Nothing stays resident unless you enable the optional control channel (see below), and even then the server can only ask the host to collect — never to run arbitrary commands.
+- **Server** (`server/`): Next.js + PostgreSQL web console and API, plus a worker that syncs vulnerability feeds, matches every host's inventory, hosts the real-time control channel, and emails alerts.
 
 What it detects today:
 
@@ -27,12 +27,21 @@ The first report from a host sets a baseline (one summary mail). After that, onl
 AI-defense features (implemented):
 - **File-integrity (AIDE-style)**: the agent hashes watched system paths read-only; the baseline lives on the server and auto-promotes, and changes to SSH keys, sudoers, passwd/shadow, binaries, cron or systemd units raise alerts.
 - **Log threat detection (Sigma)**: SigmaHQ Linux rules are synced and compiled to line matchers, run alongside the built-in high-signal rules.
-- **Pull-type hosts (read-only SSH)**: for hosts that cannot run the agent (e.g. shared hosting / Sakura rental server) â lockfile SBOM, runtime versions, ports and daily logs over SSH, no root required, no writes.
-- **Projects**: evaluation runs only on registered projects; the agent's auto-detected directories are shown as candidates to approve. Sub-directories can be excluded.
+- **Pull-type hosts (read-only SSH)**: for hosts that cannot run the agent (e.g. shared hosting / Sakura rental server) — lockfile SBOM, runtime versions, ports and daily logs over SSH, no root required, no writes.
+- **Projects**: evaluation runs only on registered projects; the agent's auto-detected directories are shown as candidates to approve. Sub-directories can be excluded, and non-deployed work copies (`outputs/`, backup dirs) are skipped so stale backups don't produce false findings.
+- **Per-project remediation**: findings are shown with the versions actually installed under that project (no cross-project version mixing), and the suggested upgrade target stays on the installed version's own major release line (never a cross-major downgrade).
+- **Patch history**: each host has a "patch record" timeline of resolved vulnerabilities in the order they were observed, with before → after versions, the kind of fix (updated / removed / excluded) and a running count — so improvements visibly accumulate.
 - **Allowed-IP lists** per host (and a global default), **TOTP 2FA** for the console, and **copy-paste Claude Code remediation prompts** per fix.
 
+### On-demand collection and the real-time control channel
+Normally the agent reports on its schedule (hourly) and a lightweight check-in (every 5 minutes) lets the console request a one-off collection, so after you apply a fix it shows as resolved within a few minutes.
+
+For near-instant feedback you can also run the agent as a resident service, `minisoc2-agent wait`: it holds one **outbound** WebSocket to the server (NAT-friendly; no inbound port). The server then pushes on-demand collections in seconds, and the console shows the host as online. The channel carries a fixed set of verbs only (`collect` / `rematch` / `update`) — the agent still only ever collects read-only, so there is no remote-exec surface. The cron schedule stays in place as the reliable fallback if the channel is down.
+
+The console's "confirm fix / collect now" button uses this: after you remediate, press it and the page refreshes automatically once a fresh report lands.
+
 ### Agent updates
-Each run fetches `<server>/agent/manifest.json`. If a newer build is listed, it is downloaded, its sha256 and **ed25519 signature** are checked against the public key embedded in the running agent, and then it runs. If anything fails, the newest build already on disk runs instead. You can pin a version (`minisoc2-agent config --pin 0.1.0`) or turn updates off (`--auto-update off`).
+Each run fetches `<server>/agent/manifest.json`. If a newer build is listed, it is downloaded, its sha256 and **ed25519 signature** are checked against the public key embedded in the running agent, and then it runs. If anything fails, the newest build already on disk runs instead. You can pin a version (`minisoc2-agent config --pin <version>`) or turn updates off (`--auto-update off`).
 
 Hosts that can reach the minisoc2 server but not npm or the internet work the same way, because the agent is served by your minisoc2 server. Hosts that cannot reach the server are out of scope.
 
@@ -58,35 +67,56 @@ npm run agent:release                # build + sign the agent into server/data/a
 cd server
 npm run migrate
 npm run build
-npm run start      # web console + API on port 3032
-npm run worker     # background jobs (run as a second service)
+npm run start      # web console + API on port 3042
+npm run worker     # background jobs + control-channel hub (run as a second service)
 ```
 
-Run both `npm run start` and `npm run worker` under systemd (or another supervisor). Put the reverse proxy in front of port 3032.
+Run both `npm run start` and `npm run worker` under systemd (or another supervisor). Put the reverse proxy in front of port 3042.
 
-If you use ModSecurity with the OWASP CRS, exclude `/api/v1/enroll`, `/api/v1/report` and `/api/v1/logs` from body inspection. The agent sends gzip bodies with `Content-Encoding: gzip`, which CRS rule 920450 blocks.
+If you use ModSecurity with the OWASP CRS, exclude `/api/v1/enroll`, `/api/v1/report`, `/api/v1/logs` and `/api/v1/ws` from body inspection. The agent sends gzip bodies with `Content-Encoding: gzip`, which CRS rule 920450 blocks.
+
+To enable the optional real-time control channel, the worker opens a WebSocket hub on `127.0.0.1:3043` (override with `AGENT_WS_PORT`). Proxy `/api/v1/ws` to it as a WebSocket upgrade **before** the catch-all proxy, e.g. with Apache's `mod_proxy_wstunnel`:
+
+```apache
+ProxyPass        /api/v1/ws ws://127.0.0.1:3043/
+ProxyPassReverse /api/v1/ws ws://127.0.0.1:3043/
+ProxyPass        /          http://127.0.0.1:3042/
+ProxyPassReverse /          http://127.0.0.1:3042/
+```
 
 Vercel and other serverless hosts are not supported: the worker must run continuously and PostgreSQL is required.
 
 ## Usage
 1. Open `https://<your-server>/setup` and create the administrator. You need the `SETUP_TOKEN` from `.env`.
-2. **Settings**: turn on email. For Gmail, use an app password: Google Account â Security â 2-Step Verification â App passwords. Then send a test mail.
+2. **Settings**: turn on email. For Gmail, use an app password: Google Account → Security → 2-Step Verification → App passwords. Then send a test mail.
 3. **Add host**: create an enroll token and run the command shown on the target host, for example:
    ```bash
    sudo npx -y https://<your-server>/agent/minisoc2-agent.tgz install \
      --server https://<your-server> --token <enroll-token> --scan /srv,/var/www,/home
    ```
-   This registers the host, copies the agent to `~/.minisoc2/`, schedules an hourly run, and sends the first report.
+   This registers the host, copies the agent to `~/.minisoc2/`, schedules an hourly run plus a 5-minute check-in, and sends the first report.
    For hosts that cannot run the agent (shared hosting), use **Hosts → Add pull host (SSH)** instead: the server collects over read-only SSH.
-4. Review **Vulnerabilities**, **Alerts** and **Hosts**. Add CVEs you must track to **Watched CVEs**.
+4. (Optional) For near-instant on-demand collection, run the control channel as a service on the host:
+   ```ini
+   # /etc/systemd/system/minisoc2-agent-wait.service
+   [Service]
+   ExecStart=/usr/bin/node /root/.minisoc2/minisoc2.mjs wait
+   Restart=always
+   RestartSec=10
+   ```
+   `systemctl enable --now minisoc2-agent-wait.service`. The host then shows as online and collects within seconds when you press "collect now".
+5. Review **Vulnerabilities**, **Alerts** and **Hosts**. Each host has a **patch record** of what has been fixed. Add CVEs you must track to **Watched CVEs**.
 
 Agent commands:
 
 ```
 minisoc2-agent run [--no-update] [--dry-run]
+minisoc2-agent checkin                                       # cheap poll; collects only if requested
+minisoc2-agent wait                                          # resident control channel (real-time on-demand collect)
 minisoc2-agent send-log --source <name> [--file <path>]     # or pipe lines on stdin
 minisoc2-agent config [--scan <dir,dir>] [--skip <name,name>] [--auto-update on|off] [--pin <version>|--unpin]
                      [--log-files <path,glob>] [--journal on|off] [--sudo on|off]
+                     [--aide on|off] [--aide-paths <dir,dir>] [--aide-excludes <dir,dir>]
 minisoc2-agent schedule install|remove|show [--every <hours>]
 ```
 
@@ -100,91 +130,132 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 
 ---
 
-# minisoc2
+# minisoc2（日本語）
 
-> minisoc2 ã¯ minisoc ã®æ¬¡ä¸ä»£çã§ãAI æä»£ã®é²å¾¡ã·ã¹ãã ã¨ãã¦ **Linux ãµã¼ãã¼å°ç¨**ï¼Amazon Linux 2023ã»Ubuntu ã»ã RPM/dpkg/apk ç³»ï¼ã«ä½ããã¦ãã¾ããSBOM/CVE/ã­ã°ç£è¦ã«å ãããµã¼ãã¼å´ AIDE ç¸å½ã®ãã¡ã¤ã«æ¹ããæ¤ç¥ãSigma ã«ããã­ã°èå¨æ¤ç¥ãã¨ã¼ã¸ã§ã³ããç½®ããªããã¹ãåãã®ãã«åï¼èª­ã¿åãå°ç¨ SSHï¼ç»é²ãç®¡çè TOTP 2FAããã¹ããã¨ã®è¨±å¯ IPãã³ããã§ä½¿ãã Claude Code ä¿®å¾©ãã­ã³ãããåãã¾ãããã¹ãã¸ã®ã¢ã¯ã»ã¹ã¯å¿ãèª­ã¿åãå°ç¨ã§ããµã¼ãã¼ãããã¹ãã¸æ¸ãè¾¼ã¿ãå½ä»¤ã¯è¡ãã¾ãããWindows / macOS ã¯å¯¾è±¡å¤ã§ãã
+> minisoc2 は minisoc の次世代版で、**Linux サーバー専用**（Amazon Linux 2023・Ubuntu、その他 RPM/dpkg/apk 系）の、AI 時代の防御システムです。SBOM／CVE／ログ監視に加え、サーバー側 AIDE 相当のファイル改ざん検知、Sigma によるログ脅威検知、エージェントを置けないホスト向けのプル型（読み取り専用 SSH）登録、管理者の TOTP 2FA、ホストごとの許可 IP、オンデマンド収集のためのリアルタイム制御チャネル、ホストごとの「対処の記録（パッチ適用履歴）」、コピペで使える Claude Code 修復プロンプトを備えます。ホストへのアクセスは必ず読み取り専用で、サーバーからホストへ書き込みや命令は行いません。Windows / macOS は対象外です。
 
-## æ¦è¦
-minisoc2 ã¯ãæ°å°ãæ°ç¾å°ã® Linux ãµã¼ãã¼ãè¦å®ãè»½éãªã»ã«ããã¹ãå SOCï¼ã»ã­ã¥ãªãã£ç£è¦ã»ã³ã¿ã¼ï¼ã§ãããã¹ãã¸ã®ã¢ã¯ã»ã¹ã¯å¿ã**èª­ã¿åãå°ç¨**ã§ããµã¼ãã¼ãããã¹ãã¸å½ä»¤ãæ¸ãè¾¼ã¿ãéãçµè·¯ã¯ããã¾ããã
+## 概要
+minisoc2 は、数台〜数百台の Linux サーバーを見守る軽量なセルフホスト型 SOC（セキュリティ監視センター）です。ホストへのアクセスは必ず**読み取り専用**で、サーバーからホストへ命令や書き込みを送る経路はありません。
 
-- **ã¨ã¼ã¸ã§ã³ã**ï¼`agent/`ï¼ï¼ä¾å­ã¼ã­ã® Node.js åä¸ãã¡ã¤ã«ãcron ãã¿ã¹ã¯ã¹ã±ã¸ã¥ã¼ã©ããèµ·åãããã¨ãã¤ã³ã¹ãã¼ã«æ¸ã¿ããã±ã¼ã¸ã»OS ã®æªé©ç¨ã»ã­ã¥ãªãã£æ´æ°ã»ãã¹ãã®ç¶æãéãã¦ãµã¼ãã¼ã¸éããçµäºãã¾ããå¸¸é§ããããµã¼ãã¼ãããã¹ãã¸å½ä»¤ãéãçµè·¯ãããã¾ããã
-- **ãµã¼ãã¼**ï¼`server/`ï¼ï¼Next.js + PostgreSQL ã®ç®¡çç»é¢ã¨ API ã«å ããèå¼±æ§ãã£ã¼ãã®åæã»å¨ãã¹ãã®ç§åã»ã¡ã¼ã«éç¥ãè¡ãã¯ã¼ã«ã¼ã§æ§æããã¾ãã
+- **エージェント**（`agent/`）：依存ゼロの Node.js 単一ファイル。cron（スケジューラ）から起動され、インストール済みパッケージ・OS の未適用セキュリティ更新・ホストの状態を集めてサーバーへ送り、終了します。常駐するのは任意の制御チャネルを有効にしたときだけで、その場合もサーバーができるのは「収集して」と頼むことだけ（任意コマンドの実行経路はありません）。
+- **サーバー**（`server/`）：Next.js + PostgreSQL の管理画面と API に加え、脆弱性フィードの同期・全ホストの照合・リアルタイム制御チャネル・メール通知を行うワーカーで構成されます。
 
-ç¾å¨æ¤ç¥ã§ãããã®ï¼
+現在検知できるもの：
 
-| å¯¾è±¡ | æå ±æº |
+| 対象 | 情報源 |
 |---|---|
-| ã¢ããªä¾å­ã®èå¼±æ§ï¼npm ã® `package-lock.json`ãPyPI ã® `requirements*.txt` ã®åºå®çãPackagist ã® `composer.lock`ï¼ | OSV.dev |
-| Debian / Ubuntu / Alpine ã®ããã±ã¼ã¸ | OSV.dev |
-| RPM ç³»ï¼Amazon LinuxãRHEL ç³»ï¼ã®æªé©ç¨ã»ã­ã¥ãªãã£æ´æ° | ãã¹ãèªèº«ã® `dnf updateinfo`ï¼Amazon Linux 2023 ã§ã¯ `--releasever=latest` ãä»ä¸ï¼ |
-| å®éã«æªç¨ããã¦ããèå¼±æ§ | CISA KEV |
-| å ±åãæ­¢ã¾ã£ããã¹ããæ´æ°ãæ­¢ã¾ã£ãèå¼±æ§ãã£ã¼ã | ãµã¼ãã¼èªèº« |
-| æ°ããå¾åãã¼ããæ°ããã­ã°ã¤ã³ã¢ã«ã¦ã³ãã`authorized_keys`ã»`sudoers`ã»`passwd`ã»cron ã®å¤æ´ | ã¨ã¼ã¸ã§ã³ããéãããã¹ãç¶æ |
-| ç£è¦å¯¾è±¡ã«ç»é²ãã CVEï¼åºç¾æã¨ãä¿®æ­£ãå±ããæã«éç¥ï¼ | ãµã¼ãã¼èªèº« |
+| アプリ依存の脆弱性（npm の `package-lock.json`、PyPI の `requirements*.txt` の固定版、Packagist の `composer.lock`） | [OSV.dev](https://osv.dev) |
+| Debian / Ubuntu / Alpine のパッケージ | OSV.dev |
+| RPM 系（Amazon Linux・RHEL 系）の未適用セキュリティ更新 | ホスト自身の `dnf updateinfo`（AL2023 では `--releasever=latest`） |
+| 悪用が確認された脆弱性 | [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) |
+| 報告が途絶えたホスト・古くなった脆弱性フィード | サーバー自身 |
+| 新しい待受ポート、新規ログインアカウント、`authorized_keys`／`sudoers`／`passwd`／cron の変更 | エージェントのホスト状態 |
+| 監視中の CVE（出現時と修正到達時に通知） | サーバー自身 |
 
-ãã¹ãã®ååå ±åã¯åºæºç·ã¨ãã¦æ±ããã¾ã¨ãã®ã¡ã¼ã«ã1éã ãéãã¾ããä»¥éã¯æ°ããè¦ã¤ãã£ããã®ã ããéç¥ãã¾ãããå½±é¿ããªããã¨å¤æ­ããèå¼±æ§ã¯ CycloneDX VEX ã®çç±ãä»ãã¦ææ­¢ã§ãããã®å¤æ­ãè¨é²ã«æ®ãã¾ãã
+ホストの初回報告は基準線になります（まとめメール1通）。以降は新しく見つかったものだけを通知します。「影響なし」と判断した項目は CycloneDX VEX の理由付きで抑止でき、判断が記録として残ります。
 
-**ã­ã°ç£è¦**ï¼ã¨ã¼ã¸ã§ã³ãã¯å®è¡ã®ãã³ã« journald ã¨åã­ã°ãã¡ã¤ã«ï¼`/var/log/secure`ã`auth.log`ãfail2banãApache / nginx ã®ã¢ã¯ã»ã¹ã­ã°ãªã©ãå¤æ´å¯ï¼ã®æ°ããåã ããéãã¾ããã¢ããªããã¯ `minisoc2-agent send-log` ã§ãã¤ã§ãéãã¾ããã«ã¼ã«ã§æ¬¡ã®äºè±¡ãã¢ã©ã¼ãã«ãã¾ãã
-- åãã¦è¦ãIPããã®SSHã­ã°ã¤ã³
-- SSHã®ç·å½ãã
-- sudo ã®èªè¨¼å¤±æãåãã¦è¦ãã¦ã¼ã¶ã¼ã«ãã sudo
-- ã¢ã«ã¦ã³ãã®ä½æ
-- æ©å¾®ãªWebãã¹ã¸ã®200å¿ç­ã404ã®å¤§éçºçï¼ã¹ã­ã£ã³ï¼
-- auditd ã®ç£è¦ã­ã¼ã«ä¸è´ããå¤æ´
+**ログ監視**：各実行で journald とログファイル（`/var/log/secure`、`auth.log`、fail2ban、Apache/nginx のアクセスログ。設定可能）の新着を差分送信し、アプリからは `minisoc2-agent send-log` でいつでも行を送れます。新しい IP からの SSH ログイン、ブルートフォース、sudo 失敗、新規ユーザーの sudo、アカウント作成、200 応答した機微な Web パス、404 スキャンの多発、監査キーなどをルールで通知し、日次で「直近7日平均の3倍」の急増源を検出します。生ログは設定期間（既定30日・日次パーティション）保持し、ディスク使用率が閾値を超えると保存を停止します（日次集計は恒久保持）。
 
-ãããã¦ãã­ã°éãç´è¿7æ¥å¹³åã®3åãè¶ããã½ã¼ã¹ãæ¯æ¥æ¤åºãã¾ããçã­ã°ã¯æ¥å¥ã«åãã¦ä¿å­ããä¿å­æéï¼æ¢å®30æ¥ï¼ãéããã¨æ¶ãã¾ãããã£ã¹ã¯ä½¿ç¨çãä¸éãè¶ãã¦ããéã¯ä¿å­ãæ­¢ãã¾ããæ¥å¥ã®éè¨å¤ã¯æ°¸ç¶çã«æ®ãã¾ãã
+AI 防御機能（実装済み）：
+- **ファイル改ざん検知（AIDE 相当）**：エージェントが監視対象のシステムパスを読み取り専用でハッシュ化。基準線はサーバー側で自動確定し、SSH 鍵・sudoers・passwd/shadow・バイナリ・cron・systemd ユニットの変更を通知します。
+- **ログ脅威検知（Sigma）**：SigmaHQ の Linux ルールを同期・行マッチャにコンパイルし、内蔵の高シグナルルールと併用します。
+- **プル型ホスト（読み取り専用 SSH）**：エージェントを動かせないホスト（共用ホスティング／さくらのレンタルサーバー等）向けに、lockfile の SBOM・実行環境のバージョン・ポート・日次ログを SSH で収集。root 不要・書き込みなし。
+- **プロジェクト**：評価は登録済みプロジェクトだけに行い、自動検出したディレクトリは承認候補として提示します。サブディレクトリは除外でき、非デプロイの作業控え（`outputs/` やバックアップ）はスキャン対象外にして、古い控えによる誤検知を防ぎます。
+- **プロジェクト単位の修復**：脆弱性は「そのプロジェクト配下に実在するバージョン」で表示し（他プロジェクトのバージョンを混在させない）、修正版の目安は導入版と同じメジャー系列に収めます（別系列へのダウングレードは提案しません）。
+- **対処の記録（パッチ適用履歴）**：ホストごとに、解消した脆弱性を観測順のタイムラインで表示します（before → after のバージョン、種別＝更新／削除／除外、累積件数）。改善が目に見えて積み上がります。
+- ホストごとの**許可 IP**（と全体の既定）、管理画面の **TOTP 2FA**、修正ごとの**コピペ用 Claude Code 修復プロンプト**。
 
-AI é²å¾¡æ©è½ï¼å®è£æ¸ã¿ï¼ï¼
-- **ãã¡ã¤ã«æ¹ããæ¤ç¥ï¼AIDEç¸å½ï¼**ï¼ã¨ã¼ã¸ã§ã³ããç£è¦å¯¾è±¡ã®èª­ã¿åãå°ç¨ããã·ã¥ãéãããã¼ã¹ã©ã¤ã³ã¯ãµã¼ãã¼å´ã§èªåææ ¼ãSSHéµã»sudoersã»passwd/shadowã»å®è¡ãã¡ã¤ã«ã»cronã»systemd ã®å¤åãã¢ã©ã¼ãã
-- **ã­ã°èå¨æ¤ç¥ï¼Sigmaï¼**ï¼SigmaHQ ã® Linux ã«ã¼ã«ãåæã»ã³ã³ãã¤ã«ããèªä½ã®é«ã·ã°ãã«ã«ã¼ã«ã¨ä½µç¨ã
-- **ãã«åãã¹ãï¼èª­ã¿åãå°ç¨ SSHï¼**ï¼ã¨ã¼ã¸ã§ã³ããç½®ããªããã¹ãï¼å±ç¨ã¬ã³ã¿ã«ãµã¼ãã¼ï¼ãããç­ï¼åããlockfile ã® SBOMã»ã©ã³ã¿ã¤ã çã»ãã¼ãã»æ¥æ¬¡ã­ã°ã SSH ã§åéãroot ä¸è¦ã»æ¸ãè¾¼ã¿ãªãã
-- **ãã­ã¸ã§ã¯ã**ï¼è©ä¾¡ã¯ç»é²æ¸ã¿ãã­ã¸ã§ã¯ãã®ã¿ãã¨ã¼ã¸ã§ã³ããèªåæ¤åºãããã£ã¬ã¯ããªã¯åè£ã¨ãã¦æ¿èªç»é²ããµããã£ã¬ã¯ããªã®é¤å¤ãå¯è½ã
-- ãã¹ããã¨ã®**è¨±å¯IP**ï¼ï¼å¨ä½æ¢å®ï¼ãç®¡çç»é¢ã® **TOTP 2FA**ãä¿®å¾©ãã¨ã® **Claude Code ãã­ã³ããï¼ã³ããå®è¡ï¼**ã
+### オンデマンド収集とリアルタイム制御チャネル
+通常はエージェントが定期（毎時）報告し、軽量なチェックイン（5分おき）で画面からの単発収集要求を拾うので、対処後は数分で「解消」に反映されます。
 
-### ã¨ã¼ã¸ã§ã³ãã®æ´æ°
-ã¨ã¼ã¸ã§ã³ãã¯èµ·åã®ãã³ã« `<server>/agent/manifest.json` ãç¢ºèªãã¾ããæ°ããçãããã°ãã¦ã³ã­ã¼ãããsha256 ã¨ **ed25519 ç½²å**ããå®è¡ä¸­ã®ã¨ã¼ã¸ã§ã³ãã«åãè¾¼ã¾ããå¬ééµã§æ¤è¨¼ãã¦ããå®è¡ãã¾ããã©ããã§å¤±æããå ´åã¯ãæåã«ããææ°ã®çã§åãã¾ããçã®åºå®ï¼`minisoc2-agent config --pin 0.1.0`ï¼ããæ´æ°ã®åæ­¢ï¼`--auto-update off`ï¼ãã§ãã¾ãã
+さらに即時性が欲しい場合は、エージェントを常駐サービス `minisoc2-agent wait` として動かせます。サーバーへ**外向き**の WebSocket を1本張り続け（NAT 越え不要・inbound なし）、サーバーは数秒でオンデマンド収集を push、画面にはオンライン表示が出ます。チャネルで送れるのは固定の動詞（`collect` / `rematch` / `update`）だけで、エージェントは依然として読み取り専用の収集しか行わないため、任意コマンド実行の面はありません。cron のスケジュールは、チャネル不通時の確実なフォールバックとして併存します。
 
-npm ãã¤ã³ã¿ã¼ãããã«ã¯åºãããªãã minisoc2 ãµã¼ãã¼ã«ã¯å±ããããã¯ã¼ã¯ã§ããã¨ã¼ã¸ã§ã³ãã®éå¸åãèªåã® minisoc2 ãµã¼ãã¼ãªã®ã§åãããã«åãã¾ããminisoc2 ãµã¼ãã¼ã«å±ããªããã¹ãã¯å¯¾è±¡å¤ã§ãã
+画面の「対処を確認（今すぐ収集）」ボタンがこれを使います。対処後に押すと、新しい報告が届き次第ページが自動更新されます。
 
-## ã¤ã³ã¹ãã¼ã«æ¹æ³
+### エージェントの更新
+各実行で `<server>/agent/manifest.json` を確認します。新しい版があればダウンロードし、sha256 と **ed25519 署名**を実行中エージェントに埋め込まれた公開鍵で検証してから実行します。どこかで失敗した場合は、ディスク上の最新版で動きます。版の固定（`minisoc2-agent config --pin <version>`）や更新の停止（`--auto-update off`）が可能です。
 
-å¿è¦ãªãã®ï¼Node.js 20.9 ä»¥ä¸ãPostgreSQL 14 ä»¥ä¸ãTLS ä»ãã®ãªãã¼ã¹ãã­ã­ã·ï¼Apache ã nginx ãªã©ï¼ã
+minisoc2 サーバーには到達できるが npm やインターネットには出られないホストでも、エージェントは minisoc2 サーバーが配信するため同じように動きます。サーバーに到達できないホストは対象外です。
+
+## インストール
+
+要件：Node.js 20.9+、PostgreSQL 14+、TLS 付きリバースプロキシ（Apache や nginx 等）。
 
 ```bash
 git clone https://github.com/daishir0/minisoc2.git
 cd minisoc2
-npm install
+npm install                 # エージェントのビルドツール
 (cd server && npm install)
 
+# 1. データベース
 sudo -u postgres psql -c "CREATE USER minisoc2 WITH PASSWORD 'secret';" -c "CREATE DATABASE minisoc2 OWNER minisoc2;"
 
-cp server/.env.example server/.env    # ãã¹ã¦ã®å¤ãæ¸ãæãã
-npm run keygen                       # ã¨ã¼ã¸ã§ã³ãç½²åç¨ã® ed25519 éµãä½æ
-npm run agent:release                # ã¨ã¼ã¸ã§ã³ãããã«ãã»ç½²åãã¦ server/data/agent ã«éç½®
+# 2. 設定
+cp server/.env.example server/.env    # すべての値を編集
+npm run keygen                       # エージェントの署名用 ed25519 鍵ペア
+npm run agent:release                # エージェントをビルド・署名して server/data/agent へ
 
+# 3. サーバー
 cd server
 npm run migrate
 npm run build
-npm run start      # ç®¡çç»é¢ã¨ APIï¼ãã¼ã 3032ï¼
-npm run worker     # ããã¯ã°ã©ã¦ã³ãå¦çï¼å¥ãµã¼ãã¹ã¨ãã¦èµ·åï¼
+npm run start      # 管理画面 + API（ポート 3042）
+npm run worker     # バックグラウンドジョブ + 制御チャネルのハブ（別サービスとして常駐）
 ```
 
-`npm run start` ã¨ `npm run worker` ã¯ãã©ã¡ãã systemd ãªã©ã®ã¹ã¼ãã¼ãã¤ã¶ã§å¸¸é§ããããã¼ã 3032 ã®åã«ãªãã¼ã¹ãã­ã­ã·ãç½®ãã¦ãã ããã
+`npm run start` と `npm run worker` の両方を systemd（等のスーパーバイザ）で常駐させ、リバースプロキシをポート 3042 の前段に置きます。
 
-ModSecurity ã¨ OWASP CRS ãä½¿ã£ã¦ããå ´åã¯ã`/api/v1/enroll`ã»`/api/v1/report`ã»`/api/v1/logs` ãããã£æ¤æ»ã®å¯¾è±¡ããå¤ãã¦ãã ãããã¨ã¼ã¸ã§ã³ãã¯ `Content-Encoding: gzip` ã§éä¿¡ãããããCRS ã®ã«ã¼ã« 920450 ã«æ­¢ãããã¾ãã
+ModSecurity + OWASP CRS を使う場合は、`/api/v1/enroll`・`/api/v1/report`・`/api/v1/logs`・`/api/v1/ws` をボディ検査から除外してください（エージェントは `Content-Encoding: gzip` の本文を送るため、CRS ルール 920450 が阻害します）。
 
-ã¯ã¼ã«ã¼ã®å¸¸é§ã¨ PostgreSQL ãå¿è¦ãªãããVercel ãªã©ã®ãµã¼ãã¼ã¬ã¹ç°å¢ã«ã¯å¯¾å¿ãã¦ãã¾ããã
+任意のリアルタイム制御チャネルを有効にする場合、ワーカーは WebSocket ハブを `127.0.0.1:3043`（`AGENT_WS_PORT` で変更可）で開きます。`/api/v1/ws` を、全体のプロキシより**前**に WebSocket アップグレードとしてプロキシしてください（Apache の `mod_proxy_wstunnel` 例）：
 
-## ä½¿ãæ¹
-1. `https://<ãµã¼ãã¼>/setup` ãéãã`.env` ã® `SETUP_TOKEN` ãä½¿ã£ã¦ç®¡çèãä½æãã¾ãã
-2. **Settings** ã§ã¡ã¼ã«éç¥ãæå¹ã«ãã¾ããGmail ã®å ´åã¯ã¢ããªãã¹ã¯ã¼ããä½¿ãã¾ãï¼Google ã¢ã«ã¦ã³ã â ã»ã­ã¥ãªãã£ â 2 æ®µéèªè¨¼ â ã¢ããªãã¹ã¯ã¼ãï¼ããã¹ãã¡ã¼ã«ã§ç¢ºèªã§ãã¾ãã
-3. **Add host** ã§ç»é²ãã¼ã¯ã³ãä½ããè¡¨ç¤ºãããã³ãã³ããå¯¾è±¡ãã¹ãã§å®è¡ãã¾ãããã¹ãã®ç»é²ã`~/.minisoc2/` ã¸ã®ã³ãã¼ã1æéãã¨ã®å®æå®è¡ã®ç»é²ãååå ±åã¾ã§ãä¸åº¦ã«è¡ãã¾ãã
-4. **Vulnerabilities**ã»**Alerts**ã»**Hosts** ãç¢ºèªãã¾ããè¿½è·¡ãå¿è¦ãª CVE ã¯ **Watched CVEs** ã«ç»é²ãã¾ãã
+```apache
+ProxyPass        /api/v1/ws ws://127.0.0.1:3043/
+ProxyPassReverse /api/v1/ws ws://127.0.0.1:3043/
+ProxyPass        /          http://127.0.0.1:3042/
+ProxyPassReverse /          http://127.0.0.1:3042/
+```
 
-## æ³¨æç¹
-- ã·ã¹ãã å¨ä½ã®ãã¡ã¤ã«ãèª­ãããã«ãã¨ã¼ã¸ã§ã³ãã¯ rootï¼ã¾ãã¯ç®¡çèï¼ã§å®è¡ãã¦ãã ãããæ¨©éãè¶³ããªãé ç®ã¯é£ã°ããåéã¨ã©ã¼ã¨ãã¦å ±åãã¾ãããã¹ã¯ã¼ããªãã§ sudo ã§ããã¦ã¼ã¶ã¼ã§åããå ´åã¯ã`config --sudo on` ã«ããã¨ã­ã°ã `sudo -n` çµç±ã§èª­ã¿ã¾ãã
-- `requirements.txt` ã¯ `==` ã§åºå®ãããè¡ã ããç§åãã¾ããç¯å²æå®ã®è¡ã¯å¯¾è±¡å¤ã§ãã
-- ç½²åç¨ã®ç§å¯éµã¯ç£è¦å¯¾è±¡ã®ãã¹ãã«ç½®ããªãã§ãã ãããéµãä½ãç´ãï¼`npm run keygen -- --force`ï¼ã¨ãæ¢å­ã®ã¨ã¼ã¸ã§ã³ãã¯åã¤ã³ã¹ãã¼ã«ããã¾ã§æ°ããçãåãä»ãã¾ããã
+Vercel 等のサーバーレスは非対応です（ワーカーの常駐と PostgreSQL が必須）。
 
-## ã©ã¤ã»ã³ã¹
-ãã®ãã­ã¸ã§ã¯ãã¯MITã©ã¤ã»ã³ã¹ã®ä¸ã§ã©ã¤ã»ã³ã¹ããã¦ãã¾ããè©³ç´°ã¯LICENSEãã¡ã¤ã«ãåç§ãã¦ãã ããã
+## 使い方
+1. `https://<your-server>/setup` を開き、管理者を作成します（`.env` の `SETUP_TOKEN` が必要）。
+2. **設定**：メールを有効化します。Gmail はアプリパスワード（Google アカウント → セキュリティ → 2段階認証 → アプリパスワード）を使い、テスト送信します。
+3. **ホスト追加**：登録トークンを作り、対象ホストで表示されたコマンドを実行します。例：
+   ```bash
+   sudo npx -y https://<your-server>/agent/minisoc2-agent.tgz install \
+     --server https://<your-server> --token <enroll-token> --scan /srv,/var/www,/home
+   ```
+   ホストを登録し、エージェントを `~/.minisoc2/` にコピーし、毎時実行と5分おきのチェックインを設定し、初回報告を送ります。
+   エージェントを動かせないホスト（共用ホスティング）は、代わりに **ホスト → プル型を追加（SSH）** を使います（サーバーが読み取り専用 SSH で収集）。
+4. （任意）即時のオンデマンド収集が欲しい場合は、ホストで制御チャネルを常駐サービスにします：
+   ```ini
+   # /etc/systemd/system/minisoc2-agent-wait.service
+   [Service]
+   ExecStart=/usr/bin/node /root/.minisoc2/minisoc2.mjs wait
+   Restart=always
+   RestartSec=10
+   ```
+   `systemctl enable --now minisoc2-agent-wait.service`。以降、画面にオンライン表示が出て、「今すぐ収集」で数秒で反映されます。
+5. **脆弱性**・**アラート**・**ホスト**を確認します。各ホストには「**対処の記録**」があり、何を直したかが時系列で残ります。必ず追う CVE は **監視中の CVE** に登録します。
+
+エージェントのコマンド：
+
+```
+minisoc2-agent run [--no-update] [--dry-run]
+minisoc2-agent checkin                                       # 軽量ポーリング。要求時のみ収集
+minisoc2-agent wait                                          # 常駐の制御チャネル（リアルタイムのオンデマンド収集）
+minisoc2-agent send-log --source <name> [--file <path>]     # または標準入力で行を渡す
+minisoc2-agent config [--scan <dir,dir>] [--skip <name,name>] [--auto-update on|off] [--pin <version>|--unpin]
+                     [--log-files <path,glob>] [--journal on|off] [--sudo on|off]
+                     [--aide on|off] [--aide-paths <dir,dir>] [--aide-excludes <dir,dir>]
+minisoc2-agent schedule install|remove|show [--every <hours>]
+```
+
+## 注意
+- システム全体のファイルを読むにはエージェントを root で実行します。root でない場合、読めない項目はスキップされ収集エラーとして報告されます。あるいはパスワード不要 sudo のユーザーで実行し `config --sudo on` を設定すると、ログは `sudo -n` 経由で読みます。
+- `requirements.txt` は厳密な固定（`==`）のみ照合できます。範囲指定はスキップします。
+- 署名用の秘密鍵はホストに置かないでください。鍵を差し替える（`npm run keygen -- --force`）と、既存エージェントは再インストールするまで新しいビルドを拒否します。
+
+## ライセンス
+本プロジェクトは MIT ライセンスです。詳細は LICENSE ファイルを参照してください。
