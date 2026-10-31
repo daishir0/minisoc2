@@ -168,21 +168,23 @@ export async function pushAgentConfig(fd: FormData): Promise<void> {
 
 // Fleet-wide: ask every agent host to collect now (real time where the channel is live, otherwise on
 // the next check-in). Pull hosts are polled on their own schedule and are left alone.
-export async function collectAllHosts(): Promise<void> {
+export async function collectAllHosts(): Promise<{ n: number }> {
   await requireUser();
   const hosts = await q<{ id: string }>("UPDATE hosts SET collect_requested=true WHERE kind<>'pull' AND NOT disabled RETURNING id");
   for (const h of hosts) await q('SELECT pg_notify($1, $2)', ['agent_cmd', `${h.id}:collect`]);
   await opsEvent(`全エージェントホストに収集を要求（${hosts.length}台）`);
   revalidatePath('/hosts');
+  return { n: hosts.length };
 }
 
 // Fleet-wide: re-evaluate every active host against the current feeds/scores using already-collected
 // inventory (no host contact). Useful right after a new CVE or KEV update.
-export async function rematchAllHosts(): Promise<void> {
+export async function rematchAllHosts(): Promise<{ n: number }> {
   await requireUser();
   const r = await q<{ id: string }>('UPDATE hosts SET needs_match=true WHERE NOT disabled AND baseline_done RETURNING id');
   await opsEvent(`全ホストの再照合を予約（${r.length}台）`);
   revalidatePath('/hosts');
+  return { n: r.length };
 }
 
 // Push a "self-update now" to a connected host: the agent fetches the latest signed build and runs it

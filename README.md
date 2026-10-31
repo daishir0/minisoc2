@@ -73,7 +73,11 @@ npm run worker     # background jobs + control-channel hub (run as a second serv
 
 Run both `npm run start` and `npm run worker` under systemd (or another supervisor). Put the reverse proxy in front of port 3042.
 
-If you use ModSecurity with the OWASP CRS, exclude `/api/v1/enroll`, `/api/v1/report`, `/api/v1/logs` and `/api/v1/ws` from body inspection. The agent sends gzip bodies with `Content-Encoding: gzip`, which CRS rule 920450 blocks.
+If you use ModSecurity with the OWASP CRS, exclude `/api/v1/enroll`, `/api/v1/report`, `/api/v1/logs` and `/api/v1/ws` from body inspection. The agent sends gzip bodies with `Content-Encoding: gzip`, which CRS rule 920450 blocks. Also, the console's Server Actions POST their RPC as `text/plain` with a `Next-Action` header, which CRS content-type rules reject — allow requests that carry that header, e.g.:
+
+```apache
+SecRule REQUEST_HEADERS:Next-Action "@rx ." "id:1000503,phase:1,nolog,pass,ctl:ruleRemoveById=920420,ctl:ruleRemoveById=920450,ctl:ruleRemoveById=920470"
+```
 
 To enable the optional real-time control channel, the worker opens a WebSocket hub on `127.0.0.1:3043` (override with `AGENT_WS_PORT`). Proxy `/api/v1/ws` to it as a WebSocket upgrade **before** the catch-all proxy, e.g. with Apache's `mod_proxy_wstunnel`:
 
@@ -205,7 +209,11 @@ npm run worker     # バックグラウンドジョブ + 制御チャネルの�
 
 `npm run start` と `npm run worker` の両方を systemd（等のスーパーバイザ）で常駐させ、リバースプロキシをポート 3042 の前段に置きます。
 
-ModSecurity + OWASP CRS を使う場合は、`/api/v1/enroll`・`/api/v1/report`・`/api/v1/logs`・`/api/v1/ws` をボディ検査から除外してください（エージェントは `Content-Encoding: gzip` の本文を送るため、CRS ルール 920450 が阻害します）。
+ModSecurity + OWASP CRS を使う場合は、`/api/v1/enroll`・`/api/v1/report`・`/api/v1/logs`・`/api/v1/ws` をボディ検査から除外してください（エージェントは `Content-Encoding: gzip` の本文を送るため、CRS ルール 920450 が阻害します）。また、管理画面の Server Actions は RPC を `text/plain`＋`Next-Action` ヘッダで POST するため CRS のコンテンツタイプ系ルールに弾かれます。次のように当ヘッダを持つリクエストを許可してください：
+
+```apache
+SecRule REQUEST_HEADERS:Next-Action "@rx ." "id:1000503,phase:1,nolog,pass,ctl:ruleRemoveById=920420,ctl:ruleRemoveById=920450,ctl:ruleRemoveById=920470"
+```
 
 任意のリアルタイム制御チャネルを有効にする場合、ワーカーは WebSocket ハブを `127.0.0.1:3043`（`AGENT_WS_PORT` で変更可）で開きます。`/api/v1/ws` を、全体のプロキシより**前**に WebSocket アップグレードとしてプロキシしてください（Apache の `mod_proxy_wstunnel` 例）：
 

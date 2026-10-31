@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { Card, ago } from '@/components/ui';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q } from '@/lib/db';
-import { collectAllHosts, rematchAllHosts } from '../actions';
+import { FleetOps } from '@/components/FleetOps';
 
 export default async function HostsPage() {
   const hosts = await q<{
@@ -37,8 +37,7 @@ export default async function HostsPage() {
       <Breadcrumbs items={[CRUMB.home, { label: '資産' }]} />
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <h1 className="mr-auto text-xl font-semibold">資産（ホスト {hosts.length}台・登録プロジェクト {projects.length}）</h1>
-        <form action={collectAllHosts}><button className="btn-ghost" title="全エージェントホストに収集を要求（接続中は即時）">全ホスト 今すぐ収集</button></form>
-        <form action={rematchAllHosts}><button className="btn-ghost" title="取得済みインベントリで全ホストを再判定（ホストへ接続しません）">全ホスト 再照合</button></form>
+        <FleetOps />
         <Link className="btn-ghost" href="/enroll">エージェント型ホストを追加</Link>
         <Link className="btn-ghost" href="/hosts/pull/new">プル型ホストを追加（SSH）</Link>
       </div>
