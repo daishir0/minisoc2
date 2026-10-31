@@ -4,6 +4,7 @@ import { Card, ago } from '@/components/ui';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q } from '@/lib/db';
 import { FleetOps } from '@/components/FleetOps';
+import { TreeState } from '@/components/TreeState';
 
 export default async function HostsPage() {
   const hosts = await q<{
@@ -46,10 +47,11 @@ export default async function HostsPage() {
         <Card><p className="text-sm text-muted">ホストはまだありません。<Link className="text-accent" href="/enroll">最初のホストを追加</Link>してください。</p></Card>
       ) : (
         <div className="space-y-2">
+          <TreeState />
           {hosts.map((h) => {
             const projs = projByHost.get(h.id) ?? [];
             return (
-              <details key={h.id} className={`rounded-lg border border-line bg-panel ${h.disabled ? 'opacity-60' : ''}`}>
+              <details key={h.id} data-host={h.id} className={`rounded-lg border border-line bg-panel ${h.disabled ? 'opacity-60' : ''}`}>
                 <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-3 py-3 text-sm [&::-webkit-details-marker]:hidden">
                   <span className="tri shrink-0 text-xs text-muted" aria-hidden="true">▶</span>
                   <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${dot(h)}`} title={h.disabled ? '無効' : h.stale_alerted ? '報告停止' : '報告中'} />
@@ -61,7 +63,7 @@ export default async function HostsPage() {
                   {Number(h.errs) ? <span className="text-xs text-orange-500" title="直近の収集エラー">!{h.errs}</span> : null}
                   <span className="ml-auto flex items-center gap-3">
                     <span className={Number(h.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {h.k}</span>
-                    <span className={Number(h.c) ? 'text-orange-600' : 'text-muted'}>緊急 {h.c}</span>
+                    <span className={Number(h.c) ? 'font-bold text-red-600' : 'text-muted'}>緊急 {h.c}</span>
                   </span>
                 </summary>
                 <div className="border-t border-line py-2 pl-7 pr-3 text-sm">
@@ -87,7 +89,7 @@ export default async function HostsPage() {
                           <span className="ml-auto flex shrink-0 items-center gap-3 pl-5 text-xs sm:pl-0">
                             <span className="text-muted">pkg {p.pkgs}</span>
                             <span className={Number(p.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {p.k}</span>
-                            <span className={Number(p.c) ? 'text-orange-600' : 'text-muted'}>緊急 {p.c}</span>
+                            <span className={Number(p.c) ? 'font-bold text-red-600' : 'text-muted'}>緊急 {p.c}</span>
                             <span className={Number(p.hi) ? 'text-yellow-600' : 'text-muted'}>高 {p.hi}</span>
                             <Link href={`/findings?host=${p.host_id}&system=${encodeURIComponent(p.root)}&all=1`} className="text-muted underline">他 {Number(p.total) - Number(p.k) - Number(p.c) - Number(p.hi)}</Link>
                           </span>
