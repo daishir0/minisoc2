@@ -52,6 +52,9 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   const by = Object.fromEntries(sev.map((r) => [r.severity, r.n]));
   const kevN = Number((await q<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='open' AND kev", [id]))[0].n);
   const fixedN = Number((await q<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='resolved' AND resolved_at IS NOT NULL", [id]))[0].n);
+  // Audit trail: config pushes, updates and collect requests are logged as 'ops' change events (with
+  // the admin's email). Surface them so distribution is accountable.
+  const ops = await q<{ ts: Date; title: string }>("SELECT ts, title FROM change_events WHERE host_id=$1 AND kind='ops' ORDER BY ts DESC LIMIT 20", [id]);
   const ports = h.state.ports ?? [];
 
   return (
@@ -205,10 +208,22 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       )}
       {h.kind !== 'pull' && h.agent_config && (
         <Card title="エージェント設定・操作">
-          <p className="mb-3 text-sm text-muted">エージェントは自律動作し、サーバーからホストへ設定を送ることはありません。現在の設定を表示し、変更・即時収集は<b>SSHでホストに接続して貼り付けるコマンド</b>でも行えます。</p>
+          <p className="mb-3 text-sm text-muted">サーバーから配布できるのは<b>収集を減らす方向の設定だけ</b>（除外の追加・無効化）です。スキャン対象やログ対象など<b>内容を読む設定はホスト上（SSH）でのみ</b>変更できます。</p>
           <AgentConfigCard cfg={h.agent_config} invoke={h.agent_meta?.invoke ?? ''} root={!!h.agent_meta?.root} version={h.agent_version} latest={agentLatest} intervalHours={h.agent_meta?.intervalHours} hostId={h.id} online={wsOnline} />
         </Card>
       )}
+      <Card title={`操作ログ（配布・更新・収集の監査）${ops.length ? `（最近 ${ops.length}）` : ''}`}>
+        {ops.length === 0 ? <p className="text-sm text-muted">まだ操作はありません。設定配布・更新・収集要求を行うと、実施者（メール）と日時がここに残ります。</p> : (
+          <ul className="divide-y divide-line text-sm">
+            {ops.map((o, i) => (
+              <li key={i} className="flex flex-wrap items-center gap-2 py-1.5">
+                <span className="whitespace-nowrap font-mono text-xs text-muted">{new Date(o.ts).toLocaleString('ja-JP')}</span>
+                <span>{o.title}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Card>
       <Card title="ファイル改ざん検知（AIDE相当）">
         {fileBase === 0 ? (
           <p className="text-sm text-muted">{pull

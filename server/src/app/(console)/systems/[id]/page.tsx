@@ -10,6 +10,7 @@ import { SystemForm } from '../SystemForm';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { RemediationPicker } from '@/components/RemediationPicker';
 import { ConfirmCollect } from '@/components/ConfirmCollect';
+import { CopyBlock } from '@/components/CopyBlock';
 
 export default async function SystemPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ saved?: string }> }) {
   const { id } = await params;
@@ -61,10 +62,19 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
     `SELECT f.id, f.vuln_id, f.pkg, ${sysVersion} AS version, f.fixed, f.severity, f.kev FROM findings f WHERE f.host_id=$1 AND f.status='open' AND $2 = ANY(f.systems)
      ORDER BY f.kev DESC, CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 300`,
     [s.host_id, s.root]);
-  const hinfo = await q1<{ hostname: string; kind: string; ssh_host: string | null; last_seen_at: Date | null; ws_seen_at: Date | null }>(
-    'SELECT h.hostname, h.kind, h.last_seen_at, h.ws_seen_at, pt.ssh_host FROM hosts h LEFT JOIN pull_targets pt ON pt.host_id=h.id WHERE h.id=$1', [s.host_id]);
+  const hinfo = await q1<{ hostname: string; kind: string; ssh_host: string | null; last_seen_at: Date | null; ws_seen_at: Date | null;
+    agent_meta: { invoke?: string; root?: boolean } | null; agent_config: { aide?: boolean; aidePaths?: string[] } | null }>(
+    'SELECT h.hostname, h.kind, h.last_seen_at, h.ws_seen_at, h.agent_meta, h.agent_config, pt.ssh_host FROM hosts h LEFT JOIN pull_targets pt ON pt.host_id=h.id WHERE h.id=$1', [s.host_id]);
   const address = hinfo?.kind === 'pull' ? (hinfo.ssh_host ?? '') : (hinfo?.hostname ?? '');
   const wsOnline = !!hinfo?.ws_seen_at && Date.now() - new Date(hinfo.ws_seen_at).getTime() < 75_000;
+  // File-integrity coverage for this project: is its root under the host's AIDE paths? Adding a path
+  // widens what the agent hashes, so (per the config-push security model) it is applied ON THE HOST
+  // via SSH, not pushed from the server. We show the status and generate the exact command.
+  const aideEnabled = hinfo?.kind !== 'pull' && hinfo?.agent_config?.aide !== false;
+  const aidePaths = hinfo?.agent_config?.aidePaths ?? [];
+  const aideCovered = s.root !== '__os__' && aidePaths.some((p) => { const b = p.replace(/\/+$/, ''); return s.root === b || s.root.startsWith(b + '/'); });
+  const aideP = `${hinfo?.agent_meta?.root ? 'sudo ' : ''}${hinfo?.agent_meta?.invoke ?? 'minisoc2-agent'}`;
+  const aideAddCmd = `${aideP} config --aide-paths ${[...new Set([...aidePaths, s.root])].join(',')} && ${aideP} run`;
 
   return (
     <>
@@ -180,6 +190,25 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
             <button className="btn">除外を追加</button>
           </form>
           <p className="mt-2 text-xs text-muted">書き方：<code>data/**</code>（data 配下すべて）、<code>research/**/corpus*/**</code>、<code>test-fixtures</code>。場所はこのシステムのルートからの相対パスです。</p>
+        </Card>
+      )}
+
+      {s.root !== '__os__' && hinfo?.kind !== 'pull' && (
+        <Card title="ファイル改ざん監視（このプロジェクト）">
+          {!aideEnabled ? (
+            <p className="text-sm text-muted">このホストではファイル改ざん検知が無効です（ホスト側 <code>minisoc2-agent config --aide on</code> で有効化できます）。</p>
+          ) : aideCovered ? (
+            <p className="text-sm text-green-600">✅ このプロジェクトのディレクトリは改ざん監視に含まれています。配下のファイルが変更・追加・削除されると検知します。</p>
+          ) : (
+            <>
+              <p className="mb-2 text-sm text-muted">
+                このプロジェクトのディレクトリは<b>まだ改ざん監視に含まれていません</b>。含めると配下のファイル改ざん（Web改ざん・Webshell 設置など）を検知できます。
+                監視範囲の拡大は<b>内容をハッシュ化するため、サーバーからは配布せず</b>、ホスト上で次を実行して適用します（本システムのセキュリティ方針）。
+              </p>
+              <CopyBlock text={aideAddCmd} />
+              <p className="mt-2 text-xs text-muted">※ 大きなデータ/ログを含むディレクトリは「除外するパス」で絞ると、スキャンの打ち切りを防げます。</p>
+            </>
+          )}
         </Card>
       )}
 
