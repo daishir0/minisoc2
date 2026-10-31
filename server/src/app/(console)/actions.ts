@@ -130,6 +130,52 @@ export async function savePullAide(fd: FormData): Promise<void> {
 }
 
 // Queue an on-demand collection for a push host; its next check-in (within a few minutes) runs it.
+// Push an agent config change to a host over the control channel (or on its next reconnect). Only the
+// non-credential, non-exec fields are accepted; the agent applies them to its local config and
+// re-collects. Solves "a config change can't reach already-installed hosts" without touching them.
+export async function pushAgentConfig(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = String(fd.get('id'));
+  if (!/^[0-9a-f-]{36}$/.test(id)) return;
+  const list = (k: string): string[] | undefined => {
+    const v = fd.get(k);
+    if (v == null) return undefined;
+    const arr = String(v).split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+    return arr.length ? arr : undefined; // empty field = leave this setting unchanged (never blank it out)
+  };
+  const onoff = (k: string): boolean | undefined => {
+    const v = fd.get(k);
+    return v == null ? undefined : String(v) === 'on';
+  };
+  const cfg: Record<string, unknown> = {};
+  for (const k of ['scanPaths', 'skipDirs', 'aidePaths', 'aideExcludes', 'logFiles'] as const) {
+    const v = list(k);
+    if (v) cfg[k] = v;
+  }
+  for (const k of ['journal', 'useSudo', 'aide', 'autoUpdate'] as const) {
+    const v = onoff(k);
+    if (v !== undefined) cfg[k] = v;
+  }
+  const pin = fd.get('pin');
+  if (pin != null && String(pin).trim()) cfg.pin = String(pin).trim();
+  if (Object.keys(cfg).length === 0) return;
+  await q('UPDATE hosts SET desired_config=$2, config_pending=true WHERE id=$1 AND kind<>\'pull\'', [id, JSON.stringify(cfg)]);
+  await q('SELECT pg_notify($1, $2)', ['agent_cmd', `${id}:config`]);
+  await opsEvent('エージェント設定を配布（接続中なら即時・未接続は次回接続時）', id);
+  revalidatePath(`/hosts/${id}`);
+}
+
+// Push a "self-update now" to a connected host: the agent fetches the latest signed build and runs it
+// (ed25519-verified, same as the scheduled path). Offline hosts update on their next hourly run anyway.
+export async function pushUpdate(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = String(fd.get('id'));
+  if (!/^[0-9a-f-]{36}$/.test(id)) return;
+  await q('SELECT pg_notify($1, $2)', ['agent_cmd', `${id}:update`]);
+  await opsEvent('最新エージェントへの更新を指示（接続中のみ即時）', id);
+  revalidatePath(`/hosts/${id}`);
+}
+
 export async function requestCollect(fd: FormData): Promise<void> {
   await requireUser();
   const id = String(fd.get('id'));

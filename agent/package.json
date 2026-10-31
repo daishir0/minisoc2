@@ -1,6 +1,6 @@
 {
   "name": "minisoc2-agent",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "description": "minisoc2 agent: run once, collect inventory/logs/state, report to a minisoc2 server, exit.",
   "license": "MIT",
   "type": "module",

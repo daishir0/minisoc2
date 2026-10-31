@@ -8,8 +8,8 @@ import { Client } from 'pg';
 import { q } from '../src/lib/db';
 import { safeEqual, sha256hex } from '../src/lib/secrets';
 
-type Verb = 'collect' | 'rematch' | 'update';
-const VERBS = new Set<Verb>(['collect', 'rematch', 'update']);
+type Verb = 'collect' | 'rematch' | 'update' | 'config';
+const VERBS = new Set<Verb>(['collect', 'rematch', 'update', 'config']);
 const PORT = Number(process.env.AGENT_WS_PORT ?? 3043);
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), '[ws]', ...a);
 
@@ -21,11 +21,22 @@ function sendEnv(ws: WebSocket, type: string, payload: Record<string, unknown> =
   try { ws.send(JSON.stringify({ v: 1, type, payload }) + '\n'); } catch { /* ignore */ }
 }
 
-// Deliver a verb to a host if it is connected right now. Returns false if no live socket.
-export function pushToHost(hostId: string, verb: Verb): boolean {
+// Deliver a verb to a host if it is connected right now. Returns false if no live socket. The
+// `config` verb carries the host's desired config as its payload (read from the DB here).
+export async function pushToHost(hostId: string, verb: Verb): Promise<boolean> {
   const ws = conns.get(hostId);
   if (!ws || ws.readyState !== WebSocket.OPEN) return false;
+  if (verb === 'config') return sendConfig(ws, hostId);
   sendEnv(ws, verb);
+  return true;
+}
+
+// Send the host's desired config (the allowed fields only) over the channel.
+async function sendConfig(ws: WebSocket, hostId: string): Promise<boolean> {
+  const row = await q<{ desired_config: Record<string, unknown> | null }>('SELECT desired_config FROM hosts WHERE id=$1', [hostId]);
+  const cfg = row[0]?.desired_config;
+  if (!cfg) return false;
+  sendEnv(ws, 'config', cfg);
   return true;
 }
 
@@ -57,8 +68,7 @@ async function startListener(): Promise<void> {
     c.on('notification', (msg) => {
       const [hostId, verb] = String(msg.payload ?? '').split(':');
       if (!hostId || !VERBS.has(verb as Verb)) return;
-      const ok = pushToHost(hostId, verb as Verb);
-      log(`notify ${verb} ${hostId.slice(0, 8)} -> ${ok ? 'delivered' : 'offline'}`);
+      void pushToHost(hostId, verb as Verb).then((ok) => log(`notify ${verb} ${hostId.slice(0, 8)} -> ${ok ? 'delivered' : 'offline'}`));
     });
     c.on('error', (e) => { log('listen client error', e instanceof Error ? e.message : e); try { c.end(); } catch { /* */ } setTimeout(() => void connect(), 5000); });
     await c.connect();
@@ -98,6 +108,11 @@ export async function startWsHub(): Promise<void> {
             conns.set(hostId, ws);
             await markSeen(hostId);
             sendEnv(ws, 'welcome');
+            // deliver a queued config push that missed the host while it was offline
+            try {
+              const p = await q<{ config_pending: boolean }>('SELECT config_pending FROM hosts WHERE id=$1', [hostId]);
+              if (p[0]?.config_pending && await sendConfig(ws, hostId)) log(`sent pending config to ${hostId.slice(0, 8)}`);
+            } catch { /* best effort */ }
             log(`online ${hostId.slice(0, 8)} (${conns.size} connected)`);
           })();
         }

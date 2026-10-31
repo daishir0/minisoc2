@@ -6,7 +6,23 @@
 import WebSocket from 'ws';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
-import { minisoc2Home, type AgentConfig } from './config.js';
+import { loadConfig, saveConfig, minisoc2Home, type AgentConfig } from './config.js';
+
+// Only these fields can be set by a server-pushed config. Credentials (server/hostId/hostToken) are
+// never accepted, and nothing here lets the server run code — the agent stays read-only.
+const CONFIG_FIELDS: (keyof AgentConfig)[] = ['scanPaths', 'skipDirs', 'aidePaths', 'aideExcludes', 'logFiles', 'journal', 'useSudo', 'aide', 'pin', 'autoUpdate', 'pythonEnvs'];
+
+function applyConfig(payload: Record<string, unknown> | undefined): boolean {
+  if (!payload) return false;
+  const cfg = loadConfig();
+  if (!cfg) return false;
+  let changed = false;
+  for (const k of CONFIG_FIELDS) {
+    if (Object.prototype.hasOwnProperty.call(payload, k)) { (cfg as unknown as Record<string, unknown>)[k] = payload[k]; changed = true; }
+  }
+  if (changed) saveConfig(cfg);
+  return changed;
+}
 
 function wsUrl(server: string): string {
   const u = server.replace(/\/+$/, '');
@@ -63,11 +79,15 @@ export async function waitLoop(cfg: AgentConfig, version: string): Promise<void>
       buffer = lines.pop() || '';
       for (const line of lines) {
         if (!line.trim()) continue;
-        let env: { type?: string };
+        let env: { type?: string; payload?: Record<string, unknown> };
         try { env = JSON.parse(line); } catch { continue; }
         if (env.type === 'welcome') console.log('[wait] connected');
         else if (env.type === 'denied') { console.error('[wait] auth denied by server'); try { sock.close(); } catch { /* */ } }
         else if (env.type === 'collect' || env.type === 'update') collect(env.type);
+        else if (env.type === 'config') {
+          if (applyConfig(env.payload)) { console.log('[wait] config updated from server'); collect('config-applied'); }
+          else console.log('[wait] config push ignored (no applicable fields)');
+        }
         else if (env.type === 'rematch') { /* server-side only; nothing to do on the host */ }
       }
     });

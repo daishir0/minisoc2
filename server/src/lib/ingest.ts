@@ -147,7 +147,8 @@ export async function ingestReport(host: HostRow, r: Report): Promise<{ packages
     await c.query(
       `UPDATE hosts SET hostname=$2, platform=$3, os_name=$4, os_version=$5, os_id=$6, kernel=$7, arch=$8, agent_version=$9,
          last_seen_at=now(), stale_alerted=false, needs_match=true, state=$10,
-         agent_config=COALESCE($11, agent_config), agent_meta=COALESCE($12, agent_meta) WHERE id=$1`,
+         agent_config=COALESCE($11, agent_config), agent_meta=COALESCE($12, agent_meta),
+         config_pending=false WHERE id=$1`,
       [host.id, r.host.hostname, r.host.platform, r.host.osName, r.host.osVersion, r.host.osId, r.host.kernel, r.host.arch, r.agentVersion, JSON.stringify(r.state),
         r.config ? JSON.stringify(r.config) : null, r.agent ? JSON.stringify(r.agent) : null],
     );

@@ -206,7 +206,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       {h.kind !== 'pull' && h.agent_config && (
         <Card title="エージェント設定・操作">
           <p className="mb-3 text-sm text-muted">エージェントは自律動作し、サーバーからホストへ設定を送ることはありません。現在の設定を表示し、変更・即時収集は<b>SSHでホストに接続して貼り付けるコマンド</b>でも行えます。</p>
-          <AgentConfigCard cfg={h.agent_config} invoke={h.agent_meta?.invoke ?? ''} root={!!h.agent_meta?.root} version={h.agent_version} latest={agentLatest} intervalHours={h.agent_meta?.intervalHours} />
+          <AgentConfigCard cfg={h.agent_config} invoke={h.agent_meta?.invoke ?? ''} root={!!h.agent_meta?.root} version={h.agent_version} latest={agentLatest} intervalHours={h.agent_meta?.intervalHours} hostId={h.id} online={wsOnline} />
         </Card>
       )}
       <Card title="ファイル改ざん検知（AIDE相当）">

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { pushAgentConfig, pushUpdate } from '@/app/(console)/actions';
 
 export interface AgentConfig {
   scanPaths: string[]; skipDirs: string[]; aidePaths: string[]; aideExcludes: string[];
@@ -20,10 +21,11 @@ const lines = (s: string) => s.split(/[\n,]/).map((x) => x.trim()).filter(Boolea
 
 // Shows the agent's effective settings (read-only), its update status, and generates ready-to-paste
 // SSH commands to change settings / collect now / change frequency. The server never runs these.
-export function AgentConfigCard({ cfg, invoke, root, version, latest, intervalHours }: {
-  cfg: AgentConfig; invoke: string; root: boolean; version: string; latest: string; intervalHours?: number;
+export function AgentConfigCard({ cfg, invoke, root, version, latest, intervalHours, hostId, online }: {
+  cfg: AgentConfig; invoke: string; root: boolean; version: string; latest: string; intervalHours?: number; hostId: string; online: boolean;
 }) {
   const [scan, setScan] = useState(cfg.scanPaths.join('\n'));
+  const [skip, setSkip] = useState((cfg.skipDirs ?? []).join('\n'));
   const [aide, setAide] = useState((cfg.aidePaths ?? []).join('\n'));
   const [aideEx, setAideEx] = useState((cfg.aideExcludes ?? []).join('\n'));
   const [logs, setLogs] = useState((cfg.logFiles ?? []).join('\n'));
@@ -31,7 +33,7 @@ export function AgentConfigCard({ cfg, invoke, root, version, latest, intervalHo
 
   const P = `${root ? 'sudo ' : ''}${invoke}`;
   const flag = (name: string, vals: string[]) => `--${name} ${vals.join(',')}`;
-  const configCmd = `${P} config ${flag('scan', lines(scan))} ${flag('aide-paths', lines(aide))} ${flag('aide-excludes', lines(aideEx))} ${flag('log-files', lines(logs))} && ${P} run`;
+  const configCmd = `${P} config ${flag('scan', lines(scan))} ${flag('skip', lines(skip))} ${flag('aide-paths', lines(aide))} ${flag('aide-excludes', lines(aideEx))} ${flag('log-files', lines(logs))} && ${P} run`;
   const runCmd = `${P} run`;
   const everyCmd = `${P} schedule install --every ${Math.max(1, Math.min(24, Number(every) || 1))} && ${P} run`;
 
@@ -48,6 +50,14 @@ export function AgentConfigCard({ cfg, invoke, root, version, latest, intervalHo
         {updateState === 'up' && <span className="rounded bg-green-600 px-2 py-0.5 text-xs text-white">最新</span>}
         {updateState === 'old' && <span className="rounded bg-orange-500 px-2 py-0.5 text-xs text-white">要更新（最新 {latest}）</span>}
         {updateState === 'unknown' && latest && <span className="text-xs text-muted">最新: {latest}</span>}
+        {updateState === 'old' && (
+          <form action={pushUpdate}>
+            <input type="hidden" name="id" value={hostId} />
+            <button className="btn-ghost text-xs" title={online ? '接続中：即時更新' : '未接続：次回の定期実行で更新されます'}>
+              最新版に更新{online ? '（即時）' : ''}
+            </button>
+          </form>
+        )}
         {cfg.autoUpdate
           ? <span className="text-xs text-muted">自動更新オン：次回の収集で最新に更新されます</span>
           : <span className="text-xs text-orange-600">自動更新オフ：下の「今すぐ収集」で更新されません。手動更新が必要です</span>}
@@ -75,13 +85,31 @@ export function AgentConfigCard({ cfg, invoke, root, version, latest, intervalHo
 
       {/* B: change settings */}
       <div className="space-y-2">
-        <h3 className="text-xs font-semibold text-muted">監視設定を変更する（下を編集 → 生成コマンドをSSHで貼り付け）</h3>
+        <h3 className="text-xs font-semibold text-muted">監視設定を変更する</h3>
         <label className="block text-xs text-muted">スキャン対象ディレクトリ（改行区切り）<textarea className={ta} rows={2} value={scan} onChange={(e) => setScan(e.target.value)} /></label>
+        <label className="block text-xs text-muted">スキャン除外ディレクトリ名（改行区切り。例：outputs, node_modules）<textarea className={ta} rows={2} value={skip} onChange={(e) => setSkip(e.target.value)} /></label>
         <label className="block text-xs text-muted">改ざん監視ディレクトリ（改行区切り。空欄で既定）<textarea className={ta} rows={2} value={aide} onChange={(e) => setAide(e.target.value)} /></label>
         <label className="block text-xs text-muted">改ざん除外（改行区切り）<textarea className={ta} rows={2} value={aideEx} onChange={(e) => setAideEx(e.target.value)} /></label>
         <label className="block text-xs text-muted">収集するログファイル（改行区切り）<textarea className={ta} rows={2} value={logs} onChange={(e) => setLogs(e.target.value)} /></label>
+
+        {/* Phase 2: push the config straight to the host over the control channel */}
+        <form action={pushAgentConfig} className="flex flex-wrap items-center gap-2 rounded border border-line bg-bg p-2">
+          <input type="hidden" name="id" value={hostId} />
+          <input type="hidden" name="scanPaths" value={scan} />
+          <input type="hidden" name="skipDirs" value={skip} />
+          <input type="hidden" name="aidePaths" value={aide} />
+          <input type="hidden" name="aideExcludes" value={aideEx} />
+          <input type="hidden" name="logFiles" value={logs} />
+          <button className="btn">この設定をホストに即時配布</button>
+          <span className={`inline-flex items-center gap-1 text-xs ${online ? 'text-green-600' : 'text-muted'}`}>
+            <span className={`h-2 w-2 rounded-full ${online ? 'bg-green-500' : 'bg-slate-400'}`} />
+            {online ? 'オンライン：数秒で反映' : '未接続：次回接続時に反映'}
+          </span>
+          <span className="w-full text-xs text-muted">※空欄の項目は変更しません（誤って空にしません）。配布後ホストが設定を保存し、その場で1回収集します。</span>
+        </form>
+
+        <h3 className="text-xs font-semibold text-muted">または：SSHで貼り付けて変更する</h3>
         <div className="flex items-start gap-2"><pre className="min-w-0 flex-1 select-all overflow-x-auto whitespace-pre-wrap break-all rounded bg-bg p-2 text-xs">{configCmd}</pre><Copy text={configCmd} /></div>
-        <p className="text-xs text-muted">設定を保存し、その場で1回収集します（<code>&amp;&amp; run</code>）。</p>
       </div>
 
       {/* interval change */}
