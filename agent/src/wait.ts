@@ -8,9 +8,13 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { loadConfig, saveConfig, minisoc2Home, type AgentConfig } from './config.js';
 
-// Only these fields can be set by a server-pushed config. Credentials (server/hostId/hostToken) are
-// never accepted, and nothing here lets the server run code — the agent stays read-only.
-const CONFIG_FIELDS: (keyof AgentConfig)[] = ['scanPaths', 'skipDirs', 'aidePaths', 'aideExcludes', 'logFiles', 'journal', 'useSudo', 'aide', 'pin', 'autoUpdate', 'pythonEnvs'];
+// Only REDUCTIVE / safe fields may be set by a server-pushed config: they can narrow or disable
+// collection but can never make the agent read a new file or send file *contents*. The fields that
+// expand read scope or read contents — logFiles (sends full file text!), scanPaths, aidePaths,
+// useSudo, pin, pythonEnvs — are intentionally NOT accepted from the server; they can only be changed
+// on the host itself (SSH). This keeps the read-only, no-exfiltration boundary even if the server or
+// its signing key is compromised: the worst a bad server can do is make a host collect *less*.
+const CONFIG_FIELDS: (keyof AgentConfig)[] = ['skipDirs', 'aideExcludes', 'journal', 'aide', 'autoUpdate'];
 
 function applyConfig(payload: Record<string, unknown> | undefined): boolean {
   if (!payload) return false;

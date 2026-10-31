@@ -92,23 +92,22 @@ export function AgentConfigCard({ cfg, invoke, root, version, latest, intervalHo
         <label className="block text-xs text-muted">改ざん除外（改行区切り）<textarea className={ta} rows={2} value={aideEx} onChange={(e) => setAideEx(e.target.value)} /></label>
         <label className="block text-xs text-muted">収集するログファイル（改行区切り）<textarea className={ta} rows={2} value={logs} onChange={(e) => setLogs(e.target.value)} /></label>
 
-        {/* Phase 2: push the config straight to the host over the control channel */}
+        {/* Push the config over the control channel. For safety only REDUCTIVE fields (skip dirs,
+            AIDE excludes, on/off toggles) are pushable; fields that read file contents or widen read
+            scope (log files, scan paths, AIDE paths) are changed on the host via SSH only. */}
         <form action={pushAgentConfig} className="flex flex-wrap items-center gap-2 rounded border border-line bg-bg p-2">
           <input type="hidden" name="id" value={hostId} />
-          <input type="hidden" name="scanPaths" value={scan} />
           <input type="hidden" name="skipDirs" value={skip} />
-          <input type="hidden" name="aidePaths" value={aide} />
           <input type="hidden" name="aideExcludes" value={aideEx} />
-          <input type="hidden" name="logFiles" value={logs} />
-          <button className="btn">この設定をホストに即時配布</button>
+          <button className="btn">除外設定をホストに即時配布</button>
           <span className={`inline-flex items-center gap-1 text-xs ${online ? 'text-green-600' : 'text-muted'}`}>
             <span className={`h-2 w-2 rounded-full ${online ? 'bg-green-500' : 'bg-slate-400'}`} />
             {online ? 'オンライン：数秒で反映' : '未接続：次回接続時に反映'}
           </span>
-          <span className="w-full text-xs text-muted">※空欄の項目は変更しません（誤って空にしません）。配布後ホストが設定を保存し、その場で1回収集します。</span>
+          <span className="w-full text-xs text-muted">配布できるのは<b>スキャン除外・改ざん除外</b>（収集を減らす方向）のみ。スキャン対象・改ざん監視・ログファイルは<b>内容を読むため、ホスト上（SSH）でのみ</b>変更できます（サーバーからの一括配布はしません）。空欄の項目は変更しません。</span>
         </form>
 
-        <h3 className="text-xs font-semibold text-muted">または：SSHで貼り付けて変更する</h3>
+        <h3 className="text-xs font-semibold text-muted">スキャン対象・ログ等を変更する（SSHで貼り付け）</h3>
         <div className="flex items-start gap-2"><pre className="min-w-0 flex-1 select-all overflow-x-auto whitespace-pre-wrap break-all rounded bg-bg p-2 text-xs">{configCmd}</pre><Copy text={configCmd} /></div>
       </div>
 

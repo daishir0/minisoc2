@@ -147,22 +147,42 @@ export async function pushAgentConfig(fd: FormData): Promise<void> {
     const v = fd.get(k);
     return v == null ? undefined : String(v) === 'on';
   };
+  // SECURITY: only reductive / safe fields are pushable. Fields that expand read scope or read file
+  // contents (logFiles, scanPaths, aidePaths, useSudo) are deliberately excluded here AND rejected by
+  // the agent, so a compromised server can never turn config push into a file-exfiltration channel.
   const cfg: Record<string, unknown> = {};
-  for (const k of ['scanPaths', 'skipDirs', 'aidePaths', 'aideExcludes', 'logFiles'] as const) {
+  for (const k of ['skipDirs', 'aideExcludes'] as const) {
     const v = list(k);
     if (v) cfg[k] = v;
   }
-  for (const k of ['journal', 'useSudo', 'aide', 'autoUpdate'] as const) {
+  for (const k of ['journal', 'aide', 'autoUpdate'] as const) {
     const v = onoff(k);
     if (v !== undefined) cfg[k] = v;
   }
-  const pin = fd.get('pin');
-  if (pin != null && String(pin).trim()) cfg.pin = String(pin).trim();
   if (Object.keys(cfg).length === 0) return;
   await q('UPDATE hosts SET desired_config=$2, config_pending=true WHERE id=$1 AND kind<>\'pull\'', [id, JSON.stringify(cfg)]);
   await q('SELECT pg_notify($1, $2)', ['agent_cmd', `${id}:config`]);
   await opsEvent('エージェント設定を配布（接続中なら即時・未接続は次回接続時）', id);
   revalidatePath(`/hosts/${id}`);
+}
+
+// Fleet-wide: ask every agent host to collect now (real time where the channel is live, otherwise on
+// the next check-in). Pull hosts are polled on their own schedule and are left alone.
+export async function collectAllHosts(): Promise<void> {
+  await requireUser();
+  const hosts = await q<{ id: string }>("UPDATE hosts SET collect_requested=true WHERE kind<>'pull' AND NOT disabled RETURNING id");
+  for (const h of hosts) await q('SELECT pg_notify($1, $2)', ['agent_cmd', `${h.id}:collect`]);
+  await opsEvent(`全エージェントホストに収集を要求（${hosts.length}台）`);
+  revalidatePath('/hosts');
+}
+
+// Fleet-wide: re-evaluate every active host against the current feeds/scores using already-collected
+// inventory (no host contact). Useful right after a new CVE or KEV update.
+export async function rematchAllHosts(): Promise<void> {
+  await requireUser();
+  const r = await q<{ id: string }>('UPDATE hosts SET needs_match=true WHERE NOT disabled AND baseline_done RETURNING id');
+  await opsEvent(`全ホストの再照合を予約（${r.length}台）`);
+  revalidatePath('/hosts');
 }
 
 // Push a "self-update now" to a connected host: the agent fetches the latest signed build and runs it
