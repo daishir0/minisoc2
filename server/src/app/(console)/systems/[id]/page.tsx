@@ -9,6 +9,7 @@ import { PendingButton } from '@/components/PendingButton';
 import { SystemForm } from '../SystemForm';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { RemediationPicker } from '@/components/RemediationPicker';
+import { ConfirmCollect } from '@/components/ConfirmCollect';
 
 export default async function SystemPage({ params, searchParams }: { params: Promise<{ id: string }>; searchParams: Promise<{ saved?: string }> }) {
   const { id } = await params;
@@ -26,9 +27,15 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
     [s.host_id, s.root, STACK_KEYS],
   );
   const detected = detectStack(markers.map((m) => m.k), eco.map((e) => e.ecosystem));
+  // A finding's `version` is aggregated across the whole host (all projects sharing the package),
+  // so per-system views must show only the versions actually installed UNDER this system's root that
+  // are vulnerable to this CVE — otherwise other projects' versions leak into the display/prompt.
+  const sysVersion = `COALESCE((SELECT string_agg(DISTINCT p.version, ', ' ORDER BY p.version) FROM host_packages p
+       WHERE p.host_id=f.host_id AND p.ecosystem=f.ecosystem AND p.name=f.pkg AND $2 = ANY(p.systems)
+         AND p.version = ANY(string_to_array(f.version, ', '))), f.version)`;
   const top = await q<{ vuln_id: string; pkg: string; version: string; fixed: string; severity: string; kev: boolean }>(
-    `SELECT vuln_id, pkg, version, fixed, severity, kev FROM findings WHERE host_id=$1 AND status='open' AND $2 = ANY(systems)
-     ORDER BY kev DESC, CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 10`,
+    `SELECT f.vuln_id, f.pkg, ${sysVersion} AS version, f.fixed, f.severity, f.kev FROM findings f WHERE f.host_id=$1 AND f.status='open' AND $2 = ANY(f.systems)
+     ORDER BY f.kev DESC, CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 10`,
     [s.host_id, s.root],
   );
   const excludes = await q<{ id: number; pattern: string; reason: string; created_by: string; created_at: Date; review: string | null; n: string }>(
@@ -51,12 +58,13 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
   const total = await q1<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='open' AND $2 = ANY(systems)", [s.host_id, s.root]);
   // open findings of this project + the host address, for the Claude Code remediation prompt picker
   const picks = await q<{ id: string; vuln_id: string; pkg: string; version: string; fixed: string; severity: string; kev: boolean }>(
-    `SELECT id, vuln_id, pkg, version, fixed, severity, kev FROM findings WHERE host_id=$1 AND status='open' AND $2 = ANY(systems)
-     ORDER BY kev DESC, CASE severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 300`,
+    `SELECT f.id, f.vuln_id, f.pkg, ${sysVersion} AS version, f.fixed, f.severity, f.kev FROM findings f WHERE f.host_id=$1 AND f.status='open' AND $2 = ANY(f.systems)
+     ORDER BY f.kev DESC, CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 300`,
     [s.host_id, s.root]);
-  const hinfo = await q1<{ hostname: string; kind: string; ssh_host: string | null }>(
-    'SELECT h.hostname, h.kind, pt.ssh_host FROM hosts h LEFT JOIN pull_targets pt ON pt.host_id=h.id WHERE h.id=$1', [s.host_id]);
+  const hinfo = await q1<{ hostname: string; kind: string; ssh_host: string | null; last_seen_at: Date | null; ws_seen_at: Date | null }>(
+    'SELECT h.hostname, h.kind, h.last_seen_at, h.ws_seen_at, pt.ssh_host FROM hosts h LEFT JOIN pull_targets pt ON pt.host_id=h.id WHERE h.id=$1', [s.host_id]);
   const address = hinfo?.kind === 'pull' ? (hinfo.ssh_host ?? '') : (hinfo?.hostname ?? '');
+  const wsOnline = !!hinfo?.ws_seen_at && Date.now() - new Date(hinfo.ws_seen_at).getTime() < 75_000;
 
   return (
     <>
@@ -107,6 +115,12 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
           </p>
           <RemediationPicker host={s.host} address={address} path={s.root} system={s.name}
             findings={picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev }))} />
+          {hinfo?.kind !== 'pull' && (
+            <div className="mt-4 border-t border-line pt-3">
+              <p className="mb-2 text-xs text-muted">対処（アップグレード）が終わったら、ここで収集を促すと解消が反映されます。</p>
+              <ConfirmCollect hostId={s.host_id} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="対処を確認（今すぐ収集）" />
+            </div>
+          )}
         </Card>
       )}
 

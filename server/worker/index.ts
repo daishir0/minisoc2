@@ -15,6 +15,7 @@ import { recordEvent } from '../src/lib/events';
 import { sendDigest } from '../src/lib/digest';
 import { NVD_DELAY_MS, nvdStep } from '../src/lib/nvd';
 import { getPolicy, getSetting, setSetting } from '../src/lib/settings';
+import { startWsHub } from './ws-hub';
 
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? '').replace(/\/+$/, '');
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
@@ -248,6 +249,7 @@ async function tick(n: number) {
 async function main() {
   const applied = await migrate();
   if (applied.length) log(`migrations applied: ${applied.join(', ')}`);
+  try { await startWsHub(); } catch (e) { log(`ws hub failed to start: ${errMsg(e)}`); }
   log('worker started');
   let n = 0;
   let stopping = false;

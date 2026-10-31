@@ -1,8 +1,8 @@
 // Work items: open KEV / critical findings grouped by what fixes them.
 //   OS packages  -> one task per host ("update these packages", reboot if the kernel is involved)
 //   dependencies -> one task per (host, system): each package with the version that clears its findings
-import { compareVersions } from './cvelookup';
 import { q } from './db';
+import { recommendedTarget } from './version';
 
 export interface TaskPackage {
   name: string;
@@ -67,6 +67,7 @@ export function remediationPrompt(t: Task, opts: { pull?: boolean } = {}): strin
     `4. 実施内容と結果（更新前後のバージョン、再起動の要否、残課題）を簡潔に報告する。`,
     ``,
     `# 注意`,
+    `- 上記の「→」は該当する系列（メジャー）の最小修正版です。ダウングレードはせず、可能であれば同一メジャー系列の最新の安定版まで上げてください（最小修正版に留めると、以降の修正を取り逃します）。`,
     `- sudo を伴う破壊的操作やサービス停止は、必要最小限にとどめ、不明な点は実行前に確認すること。`,
     `- minisoc2 がこの修正を監視しており、次回の報告（最大1時間）で自動的に「解消」になります。`,
   ];
@@ -127,10 +128,6 @@ function protectsFor(t: { hostId: string; root: string; packages: TaskPackage[];
   return [...out.values()].sort((a, b) => Number(b.exposure === 'public') - Number(a.exposure === 'public') || a.name.localeCompare(b.name));
 }
 
-function pickTarget(fixes: string[]): string {
-  const vs = fixes.flatMap((f) => f.split(',').map((x) => x.trim())).filter(Boolean);
-  return vs.sort(compareVersions).pop() ?? '';
-}
 
 function command(osId: string, root: string, eco: string | null, pkgs: TaskPackage[]): string {
   if (root === '__os__') {
@@ -155,7 +152,11 @@ export async function listTasks(opts: { hostId?: string; root?: string } = {}): 
     host_id: string; host: string; os_id: string; root: string; name: string | null; exposure: string | null;
     ecosystem: string; pkg: string; version: string; fixed: string; kev: boolean; severity: string;
   }>(
-    `SELECT f.host_id, h.name AS host, h.os_id, sys AS root, s.name, s.exposure, f.ecosystem, f.pkg, f.version, f.fixed, f.kev, f.severity
+    `SELECT f.host_id, h.name AS host, h.os_id, sys AS root, s.name, s.exposure, f.ecosystem, f.pkg,
+       COALESCE((SELECT string_agg(DISTINCT p.version, ', ' ORDER BY p.version) FROM host_packages p
+         WHERE p.host_id=f.host_id AND p.ecosystem=f.ecosystem AND p.name=f.pkg AND sys = ANY(p.systems)
+           AND p.version = ANY(string_to_array(f.version, ', '))), f.version) AS version,
+       f.fixed, f.kev, f.severity
      FROM findings f JOIN hosts h ON h.id=f.host_id
      CROSS JOIN LATERAL unnest(CASE WHEN cardinality(f.systems)=0 THEN ARRAY['__os__'] ELSE f.systems END) AS sys
      LEFT JOIN systems s ON s.host_id=f.host_id AND s.root=sys
@@ -193,7 +194,7 @@ export async function listTasks(opts: { hostId?: string; root?: string } = {}): 
   const today = new Date().toLocaleDateString('sv-SE');
   const out: Task[] = [];
   for (const t of tasks.values()) {
-    const packages = [...t.pk.values()].map(({ fixes, ...p }) => ({ ...p, target: pickTarget(fixes) }))
+    const packages = [...t.pk.values()].map(({ fixes, ...p }) => ({ ...p, target: recommendedTarget(p.current, fixes) }))
       .sort((a, b) => b.kev - a.kev || b.critical - a.critical || a.name.localeCompare(b.name));
     const eco = t.ecos.size === 1 ? [...t.ecos][0] : null;
     const { pk: _pk, ecos: _ecos, ...rest } = t;

@@ -10,6 +10,7 @@ import { ensureCheckin, nodeBinary, scheduleInstall, scheduleIntervalHours, sche
 import { checkForUpdate, execBuild, pickBuild, type UpdateResult } from './update.js';
 import type { LogBatch, LogEntry } from './types.js';
 import { errMsg } from './util.js';
+import { waitLoop } from './wait.js';
 
 declare const __VERSION__: string;
 
@@ -30,6 +31,9 @@ Usage:
       Collect and report once (what the scheduler calls). --dry-run prints the report instead of sending.
   minisoc2-agent checkin
       Cheap poll (runs often): collect only if the server requested an on-demand collection.
+  minisoc2-agent wait
+      Hold a real-time control channel to the server (collect on demand within seconds). Runs as a
+      resident service alongside cron; the schedule remains the fallback if the channel drops.
   minisoc2-agent send-log --source <name> [--file <path>]
       Send log lines from a file or stdin (e.g. from an application) right now.
   minisoc2-agent config [--scan <dir,dir>] [--skip <name,name>] [--auto-update on|off] [--pin <version>|--unpin]
@@ -248,6 +252,8 @@ async function main() {
       return runOnce(opts);
     case 'checkin':
       return checkin();
+    case 'wait':
+      return waitLoop(requireConfig(), VERSION);
     case 'config':
       return configure(opts);
     case 'send-log':

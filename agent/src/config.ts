@@ -22,6 +22,10 @@ export interface AgentConfig {
 export const DEFAULT_SKIP_DIRS = [
   'node_modules', '.git', '.svn', '.hg', '.next', 'dist', 'build', '.cache', '__pycache__',
   'venv', '.venv', 'site-packages', 'vendor', '_Archived', 'gomi', '.tmp', 'coverage',
+  // Generated / non-deployed work copies: a lockfile under here is a snapshot or build artifact,
+  // not the running application, so scanning it produces findings that do not apply to what is
+  // deployed. Override with --skip if a real app lives in one of these.
+  'outputs', 'backup', 'backups', 'bak', '_bk', '.bak',
 ];
 
 export const DEFAULT_LOG_FILES = [

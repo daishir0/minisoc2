@@ -1,14 +1,26 @@
 {
   "name": "minisoc2-agent",
-  "version": "0.1.6",
+  "version": "0.1.9",
   "description": "minisoc2 agent: run once, collect inventory/logs/state, report to a minisoc2 server, exit.",
   "license": "MIT",
   "type": "module",
-  "bin": { "minisoc2-agent": "dist/minisoc2.mjs" },
-  "files": ["dist/minisoc2.mjs"],
-  "engines": { "node": ">=18" },
+  "bin": {
+    "minisoc2-agent": "dist/minisoc2.mjs"
+  },
+  "files": [
+    "dist/minisoc2.mjs"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.2"
   }
 }

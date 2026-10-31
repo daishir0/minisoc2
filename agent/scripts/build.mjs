@@ -22,7 +22,11 @@ await build({
   platform: 'node',
   target: 'node18',
   format: 'esm',
-  banner: { js: '#!/usr/bin/env node' },
+  // ws (bundled for the control channel) uses CommonJS `require` for Node built-ins; in an ESM bundle
+  // that needs a real require, so provide one via createRequire. bufferutil/utf-8-validate stay
+  // external — ws wraps their require in try/catch and falls back to pure JS when they are absent.
+  banner: { js: "#!/usr/bin/env node\nimport { createRequire as __cr } from 'module';\nconst require = __cr(import.meta.url);" },
+  external: ['bufferutil', 'utf-8-validate'],
   define: { __VERSION__: JSON.stringify(pkg.version), __PUBKEY__: JSON.stringify(pubkey) },
   legalComments: 'none',
 });

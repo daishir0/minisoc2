@@ -25,10 +25,14 @@ export default async function TaskPage({ params, searchParams }: { params: Promi
     );
   }
   const findings = await q<{ id: string; vuln_id: string; pkg: string; version: string; fixed: string; severity: string; kev: boolean; cvss: string | null }>(
-    `SELECT id, vuln_id, pkg, version, fixed, severity, kev, cvss FROM findings
-     WHERE host_id=$1 AND status='open' AND (kev OR severity='critical')
-       AND (CASE WHEN cardinality(systems)=0 THEN ARRAY['__os__'] ELSE systems END) @> ARRAY[$2]
-     ORDER BY kev DESC, cvss DESC NULLS LAST LIMIT 300`,
+    `SELECT f.id, f.vuln_id, f.pkg,
+       COALESCE((SELECT string_agg(DISTINCT p.version, ', ' ORDER BY p.version) FROM host_packages p
+         WHERE p.host_id=f.host_id AND p.ecosystem=f.ecosystem AND p.name=f.pkg AND $2 = ANY(p.systems)
+           AND p.version = ANY(string_to_array(f.version, ', '))), f.version) AS version,
+       f.fixed, f.severity, f.kev, f.cvss FROM findings f
+     WHERE f.host_id=$1 AND f.status='open' AND (f.kev OR f.severity='critical')
+       AND (CASE WHEN cardinality(f.systems)=0 THEN ARRAY['__os__'] ELSE f.systems END) @> ARRAY[$2]
+     ORDER BY f.kev DESC, f.cvss DESC NULLS LAST LIMIT 300`,
     [k.hostId, k.root],
   );
 

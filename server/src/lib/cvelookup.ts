@@ -47,30 +47,9 @@ export function normalizeCve(input: string): string | null {
 }
 
 // Loose version ordering good enough for semver / PEP 440 / composer style versions.
-export function compareVersions(a: string, b: string): number {
-  const norm = (v: string) => v.trim().replace(/^v/i, '');
-  const [am, ap = ''] = norm(a).split(/-(.*)/s);
-  const [bm, bp = ''] = norm(b).split(/-(.*)/s);
-  const pa = am.split(/[.+]/);
-  const pb = bm.split(/[.+]/);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const x = pa[i] ?? '0';
-    const y = pb[i] ?? '0';
-    const nx = parseInt(x, 10);
-    const ny = parseInt(y, 10);
-    if (!Number.isNaN(nx) && !Number.isNaN(ny) && nx !== ny) return nx - ny;
-    if (Number.isNaN(nx) || Number.isNaN(ny)) {
-      const c = x.localeCompare(y);
-      if (c) return c;
-    }
-    // "1.0rc1" style suffixes
-    const sx = x.replace(/^\d+/, '');
-    const sy = y.replace(/^\d+/, '');
-    if (sx !== sy) return sx === '' ? 1 : sy === '' ? -1 : sx.localeCompare(sy);
-  }
-  if (ap === bp) return 0;
-  return ap === '' ? 1 : bp === '' ? -1 : ap.localeCompare(bp); // a pre-release sorts before its release
-}
+// Defined in ./version (pure, client-safe); re-exported here so existing importers keep working.
+export { compareVersions } from './version';
+import { compareVersions } from './version';
 
 // GHSA ranges look like ">= 1.0.0, < 1.2.6" or "< 0.2.4" or "= 2.0.0".
 export function inRange(version: string, range: string): boolean | null {

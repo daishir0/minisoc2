@@ -135,7 +135,10 @@ export async function requestCollect(fd: FormData): Promise<void> {
   const id = String(fd.get('id'));
   if (!/^[0-9a-f-]{36}$/.test(id)) return;
   await q("UPDATE hosts SET collect_requested=true WHERE id=$1 AND kind<>'pull'", [id]);
-  await opsEvent('今すぐ収集を要求（次回チェックインで実行）', id);
+  // If the host holds a live control socket, this reaches it in real time; the flag above is the
+  // fallback for hosts that are offline right now (picked up on the next check-in).
+  await q('SELECT pg_notify($1, $2)', ['agent_cmd', `${id}:collect`]);
+  await opsEvent('今すぐ収集を要求（接続中なら即時・未接続は次回チェックイン）', id);
   revalidatePath(`/hosts/${id}`);
 }
 

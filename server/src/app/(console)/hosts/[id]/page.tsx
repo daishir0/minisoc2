@@ -4,10 +4,11 @@ import { Card, Sev, ago } from '@/components/ui';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q, q1 } from '@/lib/db';
 import type { HostState } from '@/lib/payload';
-import { hostAction, pollPullNow, registerSystem, requestCollect, savePullAide, unregisterSystem } from '../../actions';
+import { hostAction, pollPullNow, registerSystem, savePullAide, unregisterSystem } from '../../actions';
 import { PendingButton } from '@/components/PendingButton';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { AgentConfigCard, type AgentConfig } from '@/components/AgentConfigCard';
+import { ConfirmCollect } from '@/components/ConfirmCollect';
 import { agentDistDir } from '@/lib/agentdist';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,9 +20,10 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
     id: string; name: string; hostname: string; platform: string; os_name: string; os_version: string; kernel: string; arch: string;
     agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[]; allowed_ips: string[]; file_baseline_at: Date | null; kind: string;
     agent_config: AgentConfig | null; agent_meta: { invoke?: string; root?: boolean; home?: string; intervalHours?: number } | null;
-    collect_requested: boolean; last_checkin_at: Date | null;
+    collect_requested: boolean; last_checkin_at: Date | null; ws_seen_at: Date | null;
   }>('SELECT * FROM hosts WHERE id=$1', [id]);
   if (!h) notFound();
+  const wsOnline = !!h.ws_seen_at && Date.now() - new Date(h.ws_seen_at).getTime() < 75_000;
   let agentLatest = '';
   try { agentLatest = (JSON.parse(readFileSync(join(agentDistDir(), 'manifest.json'), 'utf8')) as { latest?: string }).latest ?? ''; } catch { /* no manifest */ }
   const pull = h.kind === 'pull'
@@ -49,6 +51,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   );
   const by = Object.fromEntries(sev.map((r) => [r.severity, r.n]));
   const kevN = Number((await q<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='open' AND kev", [id]))[0].n);
+  const fixedN = Number((await q<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='resolved' AND resolved_at IS NOT NULL", [id]))[0].n);
   const ports = h.state.ports ?? [];
 
   return (
@@ -57,8 +60,14 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold">{h.name}</h1>
         {h.kind === 'pull' && <span className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white">プル型（SSH）</span>}
+        {h.kind !== 'pull' && (
+          <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs ${wsOnline ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-200' : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`} title="制御チャネル（リアルタイム収集）の接続状態">
+            <span className={`h-2 w-2 rounded-full ${wsOnline ? 'bg-green-500' : 'bg-slate-400'}`} />{wsOnline ? 'オンライン' : 'オフライン'}
+          </span>
+        )}
         {h.disabled && <span className="rounded bg-slate-500 px-2 py-0.5 text-xs text-white">無効</span>}
-        <Link className="btn-ghost ml-auto" href={`/findings?host=${h.id}`}>未対応の脆弱性</Link>
+        <Link className="btn-ghost ml-auto" href={`/hosts/${h.id}/history`}>✅ 対処の記録{fixedN ? `（${fixedN}）` : ''}</Link>
+        <Link className="btn-ghost" href={`/findings?host=${h.id}`}>未対応の脆弱性</Link>
       </div>
       <div className="grid gap-6 lg:grid-cols-3">
         <Card title="ホスト情報">
@@ -184,13 +193,13 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
         </Card>
       )}
       {h.kind !== 'pull' && (
-        <Card title="今すぐ収集を要求">
+        <Card title="今すぐ収集を要求（対処の確認）">
           <p className="mb-2 text-sm text-muted">
-            定期収集を待たずに収集させます。サーバーから命令はせず、<b>エージェントが数分おきの軽量チェックインで要求を受け取り</b>、1回だけフル収集して送信します（inboundなし・常駐なし）。
+            定期収集を待たずに収集させます。<b>制御チャネル接続中なら数秒で反映</b>、未接続なら数分おきの軽量チェックインで受け取り1回だけフル収集します。対処後にこれを押すと、新しい報告が届き次第この画面が自動更新されます。
           </p>
-          <form action={requestCollect}><input type="hidden" name="id" value={h.id} /><PendingButton className="btn" pendingText="要求中…">今すぐ収集を要求</PendingButton></form>
+          <ConfirmCollect hostId={h.id} online={wsOnline} lastSeenAt={h.last_seen_at ? new Date(h.last_seen_at).toISOString() : null} />
           <p className="mt-2 text-xs text-muted">
-            {h.collect_requested ? '⏳ 収集を要求済み。次回チェックインで実行されます。' : '状態：待機中'} ・ 最終チェックイン {h.last_checkin_at ? ago(h.last_checkin_at) : '未（エージェント 0.1.5 以降で対応）'}
+            最終チェックイン {h.last_checkin_at ? ago(h.last_checkin_at) : '未（エージェント 0.1.5 以降で対応）'}
           </p>
         </Card>
       )}
