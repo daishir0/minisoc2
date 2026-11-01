@@ -36,6 +36,10 @@ export function RemediationPicker({ host, address, path, system, systemId, findi
   const [note, setNote] = useState('');
   const [vexBusy, startVex] = useTransition();
   const [vexMsg, setVexMsg] = useState('');
+  // Rows marked "not affected" this session are hidden at once; the server re-match (which drops them
+  // from picks) can lag a few seconds, especially on pull hosts, so we don't wait for it.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const visible = findings.filter((f) => !hidden.has(f.id));
 
   const markNotAffected = () => {
     const ids = [...sel];
@@ -45,6 +49,7 @@ export function RemediationPicker({ host, address, path, system, systemId, findi
       try {
         const r = await suppressSelected(ids, reason, note, path, `/systems/${systemId}`);
         setVexMsg(`✅ ${r.n}件を「影響なし」で登録しました（アラート停止・緊急件数から除外）`);
+        setHidden((prev) => new Set([...prev, ...ids]));
         setSel(new Set());
         router.refresh();
       } catch { setVexMsg('⚠ 登録に失敗しました。'); }
@@ -52,8 +57,8 @@ export function RemediationPicker({ host, address, path, system, systemId, findi
   };
 
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const setAll = (on: boolean) => setSel(on ? new Set(findings.map((f) => f.id)) : new Set());
-  const chosen = findings.filter((f) => sel.has(f.id));
+  const setAll = (on: boolean) => setSel(on ? new Set(visible.map((f) => f.id)) : new Set());
+  const chosen = visible.filter((f) => sel.has(f.id));
   const cves = [...new Set(chosen.map((f) => f.cve))];
   // One row per package@version, with a single branch-aware target that clears every selected CVE on
   // it (the highest of each CVE's own same-major fix) — never a cross-major downgrade.
@@ -94,11 +99,11 @@ export function RemediationPicker({ host, address, path, system, systemId, findi
   // Findings not pre-selected by default (default = KEV + critical only). Surfaced so the user knows
   // the lower-severity issues are detected and selectable, not missing.
   const extra = { high: 0, medium: 0, low: 0 } as Record<string, number>;
-  for (const f of findings) if (!f.kev && f.severity !== 'critical' && f.severity in extra) extra[f.severity]++;
+  for (const f of visible) if (!f.kev && f.severity !== 'critical' && f.severity in extra) extra[f.severity]++;
   const extraNote = [extra.high && `高 ${extra.high}`, extra.medium && `中 ${extra.medium}`, extra.low && `低 ${extra.low}`].filter(Boolean).join('・');
 
   const sevOrder = (s: string) => ({ critical: 0, high: 1, medium: 2, low: 3 } as Record<string, number>)[s] ?? 4;
-  const sorted = [...findings].sort((a, b) => Number(b.kev) - Number(a.kev) || sevOrder(a.severity) - sevOrder(b.severity));
+  const sorted = [...visible].sort((a, b) => Number(b.kev) - Number(a.kev) || sevOrder(a.severity) - sevOrder(b.severity));
   // row tint + severity chip by how critical it is (KEV = actively exploited, treated as highest)
   const tier = (f: PickFinding) => (f.kev ? 'kev' : f.severity === 'critical' ? 'critical' : f.severity === 'high' ? 'high' : f.severity === 'medium' ? 'medium' : 'low');
   const ROW: Record<string, string> = {
@@ -118,7 +123,7 @@ export function RemediationPicker({ host, address, path, system, systemId, findi
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3 text-xs">
-        <span className="text-muted">{sel.size} / {findings.length} 件を選択中</span>
+        <span className="text-muted">{sel.size} / {visible.length} 件を選択中</span>
         <button type="button" onClick={() => setAll(true)} className="text-accent hover:underline">すべて選択</button>
         <button type="button" onClick={() => setAll(false)} className="text-accent hover:underline">選択解除</button>
         <span className="ml-auto flex flex-wrap items-center gap-1.5">
