@@ -79,6 +79,16 @@ async function watchCveAlerts() {
       const v = await lookupCve(cve);
       const crit = (v.external.nvd?.score ?? 0) >= 9 || v.external.nvd?.severity === 'critical';
       for (const h of v.hosts) {
+        // Persist distro-tracker OS vulns as a candidate source so they become standing findings on
+        // __os__ (not just a one-off alert) — this covers Ubuntu/Debian OS CVEs missing from OSV.
+        const desired = h.state === 'affected' ? (h.osVulns ?? []) : [];
+        const cur = await q<{ pkg: string; installed: string; fixed: string }>('SELECT pkg, installed, fixed FROM host_distro_cves WHERE host_id=$1 AND vuln_id=$2', [h.hostId, cve]);
+        const same = cur.length === desired.length && desired.every((d) => cur.some((c) => c.pkg === d.pkg && c.installed === d.installed && c.fixed === d.fixed));
+        if (!same) {
+          await q('DELETE FROM host_distro_cves WHERE host_id=$1 AND vuln_id=$2', [h.hostId, cve]);
+          for (const d of desired) await q('INSERT INTO host_distro_cves(host_id, vuln_id, pkg, installed, fixed) VALUES ($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING', [h.hostId, cve, d.pkg, d.installed, d.fixed]);
+          await q('UPDATE hosts SET needs_match=true WHERE id=$1 AND NOT disabled', [h.hostId]);
+        }
         if (h.state !== 'affected') continue;
         if (await raiseAlert({
           kind: 'watch', severity: crit ? 'critical' : 'high', hostId: h.hostId,

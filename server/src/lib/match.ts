@@ -196,6 +196,9 @@ async function candidates(hostId: string): Promise<Map<string, Candidate>> {
     [hostId],
   );
   for (const r of adv) add({ vulnId: r.vuln_id, ecosystem: 'rpm', pkg: r.pkg, version: r.installed ?? '', fixed: r.fixed ? [r.fixed] : [], severity: r.severity, source: 'os-advisory', systems: ['__os__'] });
+  // Distro-tracker confirmed OS vulns (Ubuntu/Debian) not in OSV — standing findings on __os__.
+  const distro = await q<{ vuln_id: string; pkg: string; installed: string; fixed: string }>('SELECT vuln_id, pkg, installed, fixed FROM host_distro_cves WHERE host_id=$1', [hostId]);
+  for (const r of distro) add({ vulnId: r.vuln_id, ecosystem: 'os', pkg: r.pkg, version: r.installed, fixed: r.fixed ? [r.fixed] : [], severity: 'high', source: 'os-advisory', systems: ['__os__'] });
   return out;
 }
 

@@ -26,6 +26,7 @@ export interface HostVerdict {
   os: string;
   state: HostState;
   reasons: string[];
+  osVulns?: { pkg: string; installed: string; fixed: string }[]; // Ubuntu distro-tracker vulnerable OS packages (for standing findings)
 }
 
 export interface Verdict {
@@ -178,7 +179,7 @@ export async function lookupCve(cve: string, refresh = false): Promise<Verdict> 
 
   // Distro advisory (Ubuntu): maps the CVE to OS/kernel packages per release, long before NVD.
   const ub = external.distro?.ubuntu ?? null;
-  const ubReasons = new Map<string, { red: string[]; green: string[]; matched: boolean }>();
+  const ubReasons = new Map<string, { red: string[]; green: string[]; matched: boolean; vulns: { pkg: string; installed: string; fixed: string }[] }>();
   const ubHosts = hosts.filter((h) => h.os_id === 'ubuntu');
   if (ub && ub.pkgs.length && ubHosts.length) {
     const names = [...new Set(ub.pkgs.map((p) => p.name))];
@@ -259,7 +260,7 @@ export async function lookupCve(cve: string, refresh = false): Promise<Verdict> 
       if (!external.ghsa.length) reasons.push('アプリ依存の脆弱性データベース（GitHub Advisory）に登録がありません');
       else if (!ghsaPkgs.length) reasons.push('GitHub Advisory に登録はありますが、対象パッケージの情報がありません');
     }
-    return { hostId: h.id, host: h.name, os: `${h.os_name} ${h.os_version}`.trim(), state, reasons };
+    return { hostId: h.id, host: h.name, os: `${h.os_name} ${h.os_version}`.trim(), state, reasons, osVulns: state === 'affected' ? (uv?.vulns ?? []) : [] };
   });
 
   const overall = verdicts.some((v) => v.state === 'affected') ? 'affected'
