@@ -287,6 +287,21 @@ export async function suppressFinding(fd: FormData): Promise<void> {
   if (/^\/[A-Za-z0-9/_-]+$/.test(back)) revalidatePath(back);
 }
 
+// Bulk VEX: mark several findings "not affected" at once with one justification (from the picker's
+// checkbox selection), so a whole set can be cleared in one click instead of row by row.
+export async function suppressSelected(ids: string[], reason: string, note: string, back: string): Promise<{ n: number }> {
+  await requireUser();
+  const clean = (ids || []).filter((x) => /^\d+$/.test(String(x)));
+  if (!clean.length || !(VEX_JUSTIFICATIONS as readonly string[]).includes(reason)) return { n: 0 };
+  const r = await q<{ vuln_id: string; host_id: string }>(
+    "UPDATE findings SET status='suppressed', suppress_reason=$2, suppress_note=$3, suppressed_at=now() WHERE id = ANY($1::bigint[]) AND status='open' RETURNING vuln_id, host_id",
+    [clean, reason, String(note ?? '').slice(0, 1000)]);
+  if (r[0]) await opsEvent(`${r.length}件を「影響なし」と判断（${reason}）`, r[0].host_id);
+  revalidatePath('/findings');
+  if (/^\/[A-Za-z0-9/_-]+$/.test(back)) revalidatePath(back);
+  return { n: r.length };
+}
+
 export async function addWatch(_: Result, fd: FormData): Promise<Result> {
   await requireUser();
   const cve = String(fd.get('cve') ?? '').trim().toUpperCase();

@@ -1,7 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
+import { useRouter } from 'next/navigation';
 import { bestFixTarget, recommendedTarget } from '@/lib/version';
+import { suppressSelected } from '@/app/(console)/actions';
+import { VEX_JUSTIFICATIONS, VEX_LABEL } from '@/lib/vex';
 
 export interface PickFinding {
   id: string;
@@ -15,11 +18,30 @@ export interface PickFinding {
 
 // Lets the user tick specific CVEs on a project and generates a copy-paste Claude Code prompt that
 // asks for a safe, backup-first upgrade plan. Advisory only — the human runs Claude Code on the host.
-export function RemediationPicker({ host, address, path, system, findings }: {
-  host: string; address: string; path: string; system: string; findings: PickFinding[];
+export function RemediationPicker({ host, address, path, system, systemId, findings }: {
+  host: string; address: string; path: string; system: string; systemId: number; findings: PickFinding[];
 }) {
   const [sel, setSel] = useState<Set<string>>(() => new Set(findings.filter((f) => f.kev || f.severity === 'critical').map((f) => f.id)));
   const [copied, setCopied] = useState(false);
+  const router = useRouter();
+  const [reason, setReason] = useState('');
+  const [note, setNote] = useState('');
+  const [vexBusy, startVex] = useTransition();
+  const [vexMsg, setVexMsg] = useState('');
+
+  const markNotAffected = () => {
+    const ids = [...sel];
+    if (!ids.length || !reason) return;
+    setVexMsg('');
+    startVex(async () => {
+      try {
+        const r = await suppressSelected(ids, reason, note, `/systems/${systemId}`);
+        setVexMsg(`✅ ${r.n}件を「影響なし」で登録しました（アラート停止・緊急件数から除外）`);
+        setSel(new Set());
+        router.refresh();
+      } catch { setVexMsg('⚠ 登録に失敗しました。'); }
+    });
+  };
 
   const toggle = (id: string) => setSel((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const setAll = (on: boolean) => setSel(on ? new Set(findings.map((f) => f.id)) : new Set());
@@ -122,6 +144,21 @@ export function RemediationPicker({ host, address, path, system, findings }: {
       <div className="flex justify-end">
         <button type="button" onClick={copy} disabled={cves.length === 0} className="btn-ghost text-xs disabled:opacity-50">{copied ? 'コピーしました' : 'クリップボードにコピー'}</button>
       </div>
+
+      {/* One-click bulk VEX: mark all checked CVEs "not affected" with a single justification. */}
+      <div className="flex flex-wrap items-center gap-2 rounded border border-line bg-bg p-2 text-xs">
+        <span className="text-muted">このシステムで悪用できないと判断した場合：</span>
+        <select value={reason} onChange={(e) => setReason(e.target.value)} className="input text-xs sm:w-auto">
+          <option value="">理由を選択…</option>
+          {VEX_JUSTIFICATIONS.map((j) => <option key={j} value={j}>{VEX_LABEL[j]}</option>)}
+        </select>
+        <input value={note} onChange={(e) => setNote(e.target.value)} className="input text-xs sm:w-56" placeholder="メモ（任意・例：node実行環境なし）" />
+        <button type="button" onClick={markNotAffected} disabled={vexBusy || !sel.size || !reason} className="btn disabled:opacity-50">
+          {vexBusy ? '登録中…' : `選択を影響なしで登録（${sel.size}）`}
+        </button>
+        {vexMsg && <span className="w-full text-green-600">{vexMsg}</span>}
+      </div>
+
       <pre className="max-h-96 select-all overflow-auto whitespace-pre-wrap break-words rounded bg-bg p-3 text-xs">{prompt}</pre>
     </div>
   );

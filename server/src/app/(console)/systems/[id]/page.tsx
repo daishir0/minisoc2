@@ -5,7 +5,7 @@ import { q, q1 } from '@/lib/db';
 import { STACK_KEYS, detectStack } from '@/lib/systemmeta';
 import { taskKey } from '@/lib/tasks';
 import { addExclude, removeExclude, unregisterSystem, suppressFinding } from '../../actions';
-import { VEX_JUSTIFICATIONS, VEX_LABEL } from '@/lib/vex';
+import { VEX_LABEL } from '@/lib/vex';
 import { PendingButton } from '@/components/PendingButton';
 import { SystemForm } from '../SystemForm';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
@@ -131,7 +131,7 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
           <p className="mb-3 text-sm text-muted">
             解消したいCVEにチェックを入れると、<b>対象ホスト上で <code>claude</code>（Claude Code）に貼り付けて実行できる</b>、バックアップ前提の安全なアップグレード提案プロンプトを生成します。内容を確認のうえ対象ホストで実行してください（minisoc2 がサーバーから実行することはありません）。
           </p>
-          <RemediationPicker host={s.host} address={address} path={s.root} system={s.name}
+          <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id}
             findings={picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev }))} />
           {hinfo?.kind !== 'pull' && (
             <div className="mt-4 border-t border-line pt-3">
@@ -142,44 +142,25 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
         </Card>
       )}
 
-      {s.root !== '__os__' && judge.length > 0 && (
-        <Card title="個別判定（このシステムで影響なしなら登録してアラートを止める）">
-          <p className="mb-3 text-sm text-muted">
-            このシステムで<b>到達・悪用できない</b>と判断したCVEは「影響なし（VEX）」で登録してください。以後アラートされず、緊急件数からも外れ、判断理由は SBOM/VEX 出力に記録されます（「戻す」で再評価）。
-            <span className="block">※この抑止は「{s.name}」内のこのパッケージに効きます。複数プロジェクトで共有するパッケージの場合は他システムにも影響します。</span>
-          </p>
+      {(() => { const sup = judge.filter((f) => f.status === 'suppressed'); return s.root !== '__os__' && sup.length > 0 && (
+        <Card title={`影響なしに登録済み（${sup.length}）`}>
+          <p className="mb-3 text-sm text-muted">このシステムで「影響なし（VEX）」と判断済みのCVEです。アラートされず、緊急件数からも外れています。判断理由は SBOM/VEX 出力に記録されます。「戻す」で再評価に戻せます。</p>
           <ul className="divide-y divide-line text-sm">
-            {judge.map((f) => (
-              <li key={f.id} className="py-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  {f.status === 'suppressed'
-                    ? <span className="rounded bg-slate-500 px-1.5 py-0.5 text-[10px] text-white">影響なし</span>
-                    : (f.kev ? <Kev /> : <Sev s={f.severity} />)}
-                  {vulnLink(f.vuln_id)}
-                  <span className="font-mono text-xs">{f.pkg} {f.version.slice(0, 24)}</span>
-                  {f.status === 'suppressed' && <span className="text-xs text-muted">理由：{VEX_LABEL[f.suppress_reason ?? ''] ?? f.suppress_reason}{f.suppress_note ? `（${f.suppress_note}）` : ''}</span>}
-                </div>
-                {f.status === 'suppressed' ? (
-                  <form action={suppressFinding} className="mt-1">
-                    <input type="hidden" name="id" value={f.id} /><input type="hidden" name="undo" value="1" /><input type="hidden" name="back" value={`/systems/${s.id}`} />
-                    <button className="btn-ghost text-xs text-accent">未対応に戻す（再評価）</button>
-                  </form>
-                ) : (
-                  <form action={suppressFinding} className="mt-1 flex flex-wrap items-center gap-2">
-                    <input type="hidden" name="id" value={f.id} /><input type="hidden" name="back" value={`/systems/${s.id}`} />
-                    <select name="reason" required className="input text-xs sm:w-auto">
-                      <option value="">理由を選択…</option>
-                      {VEX_JUSTIFICATIONS.map((j) => <option key={j} value={j}>{VEX_LABEL[j]}</option>)}
-                    </select>
-                    <input name="note" className="input text-xs sm:w-64" placeholder="メモ（任意・例：node実行環境なし）" />
-                    <button className="btn-ghost text-xs">影響なしで登録</button>
-                  </form>
-                )}
+            {sup.map((f) => (
+              <li key={f.id} className="flex flex-wrap items-center gap-2 py-2">
+                <span className="rounded bg-slate-500 px-1.5 py-0.5 text-[10px] text-white">影響なし</span>
+                {vulnLink(f.vuln_id)}
+                <span className="font-mono text-xs">{f.pkg} {f.version.slice(0, 24)}</span>
+                <span className="text-xs text-muted">理由：{VEX_LABEL[f.suppress_reason ?? ''] ?? f.suppress_reason}{f.suppress_note ? `（${f.suppress_note}）` : ''}</span>
+                <form action={suppressFinding} className="ml-auto">
+                  <input type="hidden" name="id" value={f.id} /><input type="hidden" name="undo" value="1" /><input type="hidden" name="back" value={`/systems/${s.id}`} />
+                  <button className="btn-ghost text-xs text-accent">未対応に戻す</button>
+                </form>
               </li>
             ))}
           </ul>
         </Card>
-      )}
+      ); })()}
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
