@@ -71,8 +71,11 @@ export function remediationPrompt(t: Task, opts: { pull?: boolean } = {}): strin
     ``,
     `# 注意`,
     `- 上記の「→」は該当する系列（メジャー）の最小修正版です。ダウングレードはせず、可能であれば同一メジャー系列の最新の安定版まで上げてください（最小修正版に留めると、以降の修正を取り逃します）。`,
+    ...(isOs ? [] : [
+      `- **実インストールと、minisoc2 が参照するマニフェストの両方を一致させること**：Python は \`pip install\` に加え **requirements.txt の該当ピンも同じ版に更新**（共用envでも各プロジェクトの requirements.txt を更新）／npm は \`npm install\` で **package-lock.json を再生成**／composer は **composer.lock を更新**。片方だけ（実環境のみ＝未解消のまま／マニフェストのみ＝偽修正）は不可。`,
+    ]),
     `- sudo を伴う破壊的操作やサービス停止は、必要最小限にとどめ、不明な点は実行前に確認すること。`,
-    `- minisoc2 がこの修正を監視しており、次回の報告（最大1時間）で自動的に「解消」になります。`,
+    `- 完了後は minisoc2 の「今すぐ収集」で解消を確認できます（待てば次回の報告＝最大1時間で自動反映）。`,
   ];
   if (opts.pull) {
     lines.unshift(
