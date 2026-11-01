@@ -77,24 +77,27 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   // OS packages are fixed with the system package manager (apt/dnf), not pip/npm — generate a distinct prompt.
   const osPkgList = [...new Set(chosen.map((f) => f.pkg.replace(/^(kernel|linux)[\w.-]*$/, (m) => (m.startsWith('kernel') ? 'kernel*' : 'linux-*'))))].slice(0, 20).join(' ');
   const osCmd = pm === 'apt' ? `sudo apt-get update && sudo apt-get install --only-upgrade ${osPkgList}` : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''} ${osPkgList}`;
+  const osPkgNames = [...new Set(chosen.map((f) => f.pkg))];
+  const cveSummary = cves.length <= 6 ? cves.join('、') : `${cves.slice(0, 6).join('、')} 他${cves.length - 6}件`;
+  const kevN2 = chosen.filter((f) => f.kev).length;
   const osPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
-    `ホスト「${host}」の **OS パッケージ（ホスト全体）** について、脆弱性 ${cves.join('、')} の対応可否を判断し、必要なら安全に解消してください。対象はアプリの依存ではなく OS のパッケージ（kernel 等）です。`,
+    `ホスト「${host}」の **OS パッケージ（kernel 等・ホスト全体）** に、脆弱性が ${cves.length} 件（${kevN2 ? `KEV ${kevN2}・` : ''}緊急含む）あります。`,
+    `OSパッケージ（特に kernel）は累積更新です。**最新のセキュリティ更新を1回当てれば、旧バージョンにあるこれらのCVEはまとめて解消**します。CVEを1件ずつ個別に当てる必要はありません。`,
     ``,
-    `# 対象パッケージ（現状 → 修正版）`,
-    ...pkgs.map((p) => `- ${p.pkg}: ${p.version || '(現行不明)'}${p.fixes.length ? ` → ${[...new Set(p.fixes)].slice(0, 2).join(' / ')}` : '（修正版は配布元未リリースの可能性）'}${p.kev ? '  ［KEV: 悪用確認済み・最優先］' : ''}`),
-    ``,
-    `# まず判定`,
-    `各CVEがこのホストで実際に該当・到達可能かを確認（稼働中カーネル／該当機能の使用有無 等）。結論を最初に明示：(a) 修正する ／ (b) 影響なし＝対処不要（理由＋VEX区分 code_not_present / code_not_reachable / requires_configuration 等）／ (c) 要確認。`,
-    ``,
-    `# (a) 修正する場合`,
-    `1. 次のコマンドで OS の該当パッケージを更新（パッケージ名は実際の導入名に合わせて調整可）：`,
+    `# 推奨アクション`,
+    `1. まずこのホストで該当機能の使用有無などから影響を評価し、結論を明示：(a) 更新する ／ (b) 影響なし＝対処不要（理由＋VEX区分）／ (c) 要確認。`,
+    `2. (a) の場合、OSのセキュリティ更新を適用（kernel は最新へ）：`,
     ``,
     `    ${osCmd}`,
+    `    （または全体更新：${pm === 'apt' ? 'sudo apt-get update && sudo apt-get upgrade' : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''}`}）`,
     ``,
-    `2. kernel を含む場合は、更新後に再起動が必要です（\`sudo reboot\`。利用者影響があれば事前合意）。`,
-    `3. 変更前のバックアップ／スナップショットとロールバック手順を用意。`,
-    `4. 実行は人間の承認後。配布元が修正版をまだ出していない（未リリース）場合は、無理に上げず「要確認」として報告。`,
-    `5. 完了後、minisoc2 の「今すぐ収集」で解消を確認する。`,
+    `3. kernel を更新したら **再起動**（\`sudo reboot\`）。稼働中カーネルは再起動で新版に切り替わります（利用者影響があれば事前合意）。`,
+    `4. 変更前にスナップショット/バックアップとロールバック手順を用意。配布元が修正版を未リリースの場合は無理に上げず「要確認」で報告。`,
+    `5. 完了後、minisoc2 の「今すぐ収集」で確認（更新＋再起動で該当 ${cves.length} 件がまとめて解消します）。`,
+    ``,
+    `# 参考（対象）`,
+    `- 対象パッケージ：${osPkgNames.slice(0, 12).join('、')}${osPkgNames.length > 12 ? ` 他${osPkgNames.length - 12}件` : ''}`,
+    `- 対象CVE（${cves.length}件）：${cveSummary}`,
   ].join('\n');
   const appPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
     `${host} のホスト（ホスト名：${host}、接続先：${address || '不明'}）の、${path} にあるシステム「${system}」について、脆弱性 ${cves.join('、')} の対応可否を判断し、必要なら安全に解消してください。`,
