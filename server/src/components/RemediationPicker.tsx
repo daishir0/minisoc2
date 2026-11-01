@@ -4,7 +4,15 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { bestFixTarget, recommendedTarget } from '@/lib/version';
 import { suppressSelected } from '@/app/(console)/actions';
-import { VEX_JUSTIFICATIONS, VEX_LABEL } from '@/lib/vex';
+
+// Plain-language reasons, mapped to CycloneDX VEX justifications. Covers the common cases without the
+// jargon; "迷ったら①" is the safe default for unused / build-only dependencies.
+const VEX_PRESETS: { code: string; label: string }[] = [
+  { code: 'code_not_present', label: '① 使われていない・実行されない（開発/ビルド用の依存、未インストール 等）' },
+  { code: 'requires_environment', label: '② この環境では動かない（必要なランタイム/設定/依存がない）' },
+  { code: 'code_not_reachable', label: '③ コードはあるが、呼び出されない（到達しない）' },
+  { code: 'protected_by_mitigating_control', label: '④ 別の対策で防いでいる（WAF・設定・緩和策 等）' },
+];
 
 export interface PickFinding {
   id: string;
@@ -147,10 +155,10 @@ export function RemediationPicker({ host, address, path, system, systemId, findi
 
       {/* One-click bulk VEX: mark all checked CVEs "not affected" with a single justification. */}
       <div className="flex flex-wrap items-center gap-2 rounded border border-line bg-bg p-2 text-xs">
-        <span className="text-muted">このシステムで悪用できないと判断した場合：</span>
+        <span className="w-full text-muted">このシステムで悪用できないと判断した場合、理由を選んで登録（迷ったら①）：</span>
         <select value={reason} onChange={(e) => setReason(e.target.value)} className="input text-xs sm:w-auto">
           <option value="">理由を選択…</option>
-          {VEX_JUSTIFICATIONS.map((j) => <option key={j} value={j}>{VEX_LABEL[j]}</option>)}
+          {VEX_PRESETS.map((p) => <option key={p.code} value={p.code}>{p.label}</option>)}
         </select>
         <input value={note} onChange={(e) => setNote(e.target.value)} className="input text-xs sm:w-56" placeholder="メモ（任意・例：node実行環境なし）" />
         <button type="button" onClick={markNotAffected} disabled={vexBusy || !sel.size || !reason} className="btn disabled:opacity-50">
