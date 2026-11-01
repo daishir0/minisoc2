@@ -74,28 +74,42 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   }
   const pkgs = [...byPkg.values()].map((e) => ({ ...e, target: recommendedTarget(e.version, e.fixes) }));
 
-  // OS packages are fixed with the system package manager (apt/dnf), not pip/npm — generate a distinct prompt.
-  const osPkgList = [...new Set(chosen.map((f) => f.pkg.replace(/^(kernel|linux)[\w.-]*$/, (m) => (m.startsWith('kernel') ? 'kernel*' : 'linux-*'))))].slice(0, 20).join(' ');
-  const osCmd = pm === 'apt' ? `sudo apt-get update && sudo apt-get install --only-upgrade ${osPkgList}` : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''} ${osPkgList}`;
+  // OS packages are fixed with apt/dnf. Kernel CVEs are cumulative (latest kernel + reboot clears them);
+  // NON-kernel OS packages each need their own fix. Keep them apart and tell the human to verify first.
+  const isKernel = (n: string) => /^(linux|kernel)([-.]|$)/.test(n);
+  const osKernelPkgs = [...new Set(chosen.filter((f) => isKernel(f.pkg)).map((f) => f.pkg))];
+  const osOtherPkgs = [...new Set(chosen.filter((f) => !isKernel(f.pkg)).map((f) => f.pkg))];
   const osPkgNames = [...new Set(chosen.map((f) => f.pkg))];
   const cveSummary = cves.length <= 6 ? cves.join('、') : `${cves.slice(0, 6).join('、')} 他${cves.length - 6}件`;
   const kevN2 = chosen.filter((f) => f.kev).length;
+  const kernelCmd = pm === 'apt'
+    ? 'sudo apt-get install --only-upgrade linux-image-$(dpkg --print-architecture) linux-headers-$(dpkg --print-architecture)'
+    : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''} "kernel*"`;
+  const otherCmd = osOtherPkgs.length
+    ? (pm === 'apt' ? `sudo apt-get install --only-upgrade ${osOtherPkgs.slice(0, 20).join(' ')}` : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''} ${osOtherPkgs.slice(0, 20).join(' ')}`)
+    : '';
+  const dryRun = pm === 'apt' ? 'apt list --upgradable && sudo apt-get -s upgrade' : `dnf check-update --security${osId === 'amzn' ? ' --releasever=latest' : ''}`;
   const osPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
-    `ホスト「${host}」の **OS パッケージ（kernel 等・ホスト全体）** に、脆弱性が ${cves.length} 件（${kevN2 ? `KEV ${kevN2}・` : ''}緊急含む）あります。`,
-    `OSパッケージ（特に kernel）は累積更新です。**最新のセキュリティ更新を1回当てれば、旧バージョンにあるこれらのCVEはまとめて解消**します。CVEを1件ずつ個別に当てる必要はありません。`,
+    `ホスト「${host}」の **OS パッケージ（ホスト全体）** について、minisoc2 が ${cves.length} 件（${kevN2 ? `KEV ${kevN2}・` : ''}緊急含む）を検出しています。これは**対処の起点リスト**です。件数・CVEを鵜呑みにせず、まず実データで残存を確認してから、安全に適用してください。`,
     ``,
-    `# 推奨アクション`,
-    `1. まずこのホストで該当機能の使用有無などから影響を評価し、結論を明示：(a) 更新する ／ (b) 影響なし＝対処不要（理由＋VEX区分）／ (c) 要確認。`,
-    `2. (a) の場合、OSのセキュリティ更新を適用（kernel は最新へ）：`,
+    `# 重要（誤解しやすい点）`,
+    `- **kernel 系は累積更新**：最新カーネルに上げて再起動すれば旧版の kernel CVE は**まとめて解消**（1件ずつ不要）。**稼働中カーネルが既に最新なら kernel 部分は対応済み**＝再更新・再起動は不要の可能性。`,
+    `- **kernel 以外の OS パッケージ**${osOtherPkgs.length ? `（例：${osOtherPkgs.slice(0, 5).join('、')}）` : ''}は**各パッケージごとに修正版を適用**して初めて解消。カーネル更新や再起動では消えません。`,
     ``,
-    `    ${osCmd}`,
-    `    （または全体更新：${pm === 'apt' ? 'sudo apt-get update && sudo apt-get upgrade' : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''}`}）`,
+    `# 手順`,
+    `1. **現状確認（読み取りのみ）**：未適用の更新と差分を把握し、minisoc2 の一覧・USN/配布元トラッカーと突合（件数やCVEの実在も確認）：`,
     ``,
-    `3. kernel を更新したら **再起動**（\`sudo reboot\`）。稼働中カーネルは再起動で新版に切り替わります（利用者影響があれば事前合意）。`,
-    `4. 変更前にスナップショット/バックアップとロールバック手順を用意。配布元が修正版を未リリースの場合は無理に上げず「要確認」で報告。`,
-    `5. 完了後、minisoc2 の「今すぐ収集」で確認（更新＋再起動で該当 ${cves.length} 件がまとめて解消します）。`,
+    `    ${dryRun}`,
+    `    uname -r   # 稼働中カーネル`,
     ``,
-    `# 参考（対象）`,
+    `2. **影響評価して結論を明示**：(a) 更新する ／ (b) 影響なし＝対処不要（理由＋VEX区分 code_not_present / requires_configuration 等）／ (c) 要確認。使っていない機能・パッケージは (b)。`,
+    `3. **スナップショット/AMI 取得後に適用**（EC2 等クラウドは特に）。グロブや kernel とアプリの混在指定は避け、明示パッケージで分けて：`,
+    ...(osKernelPkgs.length ? [`    - kernel（累積・最新へ）： ${kernelCmd}`] : []),
+    ...(osOtherPkgs.length ? [`    - その他OSパッケージ（各々）： ${otherCmd}`] : []),
+    `4. **再起動は kernel を更新した場合のみ**（\`sudo reboot\`）。配下サービスが停止するため時間帯を合意。起動不能時は旧カーネルで起動 or スナップショットから復元。`,
+    `5. 完了後、minisoc2 の「今すぐ収集」で確認。**kernel系は再起動でまとめて／非kernelは適用したものから**解消します。`,
+    ``,
+    `# 参考（minisoc2 の検出・起点）`,
     `- 対象パッケージ：${osPkgNames.slice(0, 12).join('、')}${osPkgNames.length > 12 ? ` 他${osPkgNames.length - 12}件` : ''}`,
     `- 対象CVE（${cves.length}件）：${cveSummary}`,
   ].join('\n');
