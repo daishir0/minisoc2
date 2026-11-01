@@ -152,8 +152,15 @@ async function candidates(hostId: string): Promise<Map<string, Candidate>> {
   // are host-level and always evaluated, since the host itself is registered.
   const registered = new Set((await q<{ root: string }>("SELECT root FROM systems WHERE host_id=$1 AND origin='manual'", [hostId])).map((r) => r.root));
   const evaluated = (x: string) => x === OS_SYSTEM || (registered.has(x) && !ignored.has(x));
+  // Per-system "not affected" judgments: remove the judged system from a finding so other systems that
+  // share the same package keep it. If every system of a finding is judged out, the finding disappears.
+  const vex = new Set(
+    (await q<{ system_root: string; vuln_id: string; ecosystem: string; pkg: string }>(
+      'SELECT system_root, vuln_id, ecosystem, pkg FROM finding_vex WHERE host_id=$1', [hostId],
+    )).map((r) => `${r.system_root}\u0000${r.vuln_id}\u0000${r.ecosystem}\u0000${r.pkg}`),
+  );
   const add = (c: Omit<Candidate, 'versions' | 'fixed' | 'systems' | 'cvss'> & { version: string; fixed: string[]; systems: string[]; cvss?: number | null }) => {
-    const systems = c.systems.filter(evaluated);
+    const systems = c.systems.filter(evaluated).filter((x) => !vex.has(`${x}\u0000${c.vulnId}\u0000${c.ecosystem}\u0000${c.pkg}`));
     if (c.systems.length && !systems.length) return;
     const k = `${c.vulnId}\u0000${c.ecosystem}\u0000${c.pkg}`;
     const e = out.get(k) ?? { ...c, cvss: c.cvss ?? null, versions: new Set<string>(), fixed: new Set<string>(), systems: new Set<string>() };

@@ -287,19 +287,46 @@ export async function suppressFinding(fd: FormData): Promise<void> {
   if (/^\/[A-Za-z0-9/_-]+$/.test(back)) revalidatePath(back);
 }
 
-// Bulk VEX: mark several findings "not affected" at once with one justification (from the picker's
-// checkbox selection), so a whole set can be cleared in one click instead of row by row.
-export async function suppressSelected(ids: string[], reason: string, note: string, back: string): Promise<{ n: number }> {
-  await requireUser();
+// Bulk per-system VEX: mark several findings "not affected" FOR ONE SYSTEM at once. Stored in
+// finding_vex, so a package shared by other systems stays a finding there — matching removes only the
+// judged system from each finding's systems[]. One justification for the whole checkbox selection.
+export async function suppressSelected(ids: string[], reason: string, note: string, systemRoot: string, back: string): Promise<{ n: number }> {
+  const u = await requireUser();
   const clean = (ids || []).filter((x) => /^\d+$/.test(String(x)));
-  if (!clean.length || !(VEX_JUSTIFICATIONS as readonly string[]).includes(reason)) return { n: 0 };
-  const r = await q<{ vuln_id: string; host_id: string }>(
-    "UPDATE findings SET status='suppressed', suppress_reason=$2, suppress_note=$3, suppressed_at=now() WHERE id = ANY($1::bigint[]) AND status='open' RETURNING vuln_id, host_id",
-    [clean, reason, String(note ?? '').slice(0, 1000)]);
-  if (r[0]) await opsEvent(`${r.length}件を「影響なし」と判断（${reason}）`, r[0].host_id);
+  if (!clean.length || !systemRoot || !(VEX_JUSTIFICATIONS as readonly string[]).includes(reason)) return { n: 0 };
+  const rows = await q<{ host_id: string; vuln_id: string; ecosystem: string; pkg: string }>(
+    'SELECT host_id, vuln_id, ecosystem, pkg FROM findings WHERE id = ANY($1::bigint[])', [clean]);
+  let host = '';
+  for (const r of rows) {
+    host = r.host_id;
+    await q(
+      `INSERT INTO finding_vex(host_id, system_root, vuln_id, ecosystem, pkg, reason, note, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+       ON CONFLICT (host_id, system_root, vuln_id, ecosystem, pkg)
+       DO UPDATE SET reason=EXCLUDED.reason, note=EXCLUDED.note, created_by=EXCLUDED.created_by, created_at=now()`,
+      [r.host_id, systemRoot, r.vuln_id, r.ecosystem, r.pkg, reason, String(note ?? '').slice(0, 1000), u.email]);
+  }
+  if (host) {
+    await q('UPDATE hosts SET needs_match=true WHERE id=$1', [host]); // re-match drops the system from these findings
+    await opsEvent(`${rows.length}件を「影響なし」と判断（${reason}・${systemRoot.replace(/^.*\//, '') || systemRoot}）`, host);
+  }
   revalidatePath('/findings');
   if (/^\/[A-Za-z0-9/_-]+$/.test(back)) revalidatePath(back);
-  return { n: r.length };
+  return { n: rows.length };
+}
+
+// Undo a per-system VEX judgment (the "re-evaluate" button). Re-matching restores the system.
+export async function unsuppressVex(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = String(fd.get('id'));
+  if (!/^\d+$/.test(id)) return;
+  const r = await q<{ host_id: string; vuln_id: string }>('DELETE FROM finding_vex WHERE id=$1 RETURNING host_id, vuln_id', [id]);
+  if (r[0]) {
+    await q('UPDATE hosts SET needs_match=true WHERE id=$1', [r[0].host_id]);
+    await opsEvent(`「影響なし」を取り消し（${r[0].vuln_id}）`, r[0].host_id);
+  }
+  const back = String(fd.get('back') ?? '');
+  if (/^\/[A-Za-z0-9/_-]+$/.test(back)) revalidatePath(back);
 }
 
 export async function addWatch(_: Result, fd: FormData): Promise<Result> {

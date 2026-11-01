@@ -43,7 +43,7 @@ export function RemediationPicker({ host, address, path, system, systemId, findi
     setVexMsg('');
     startVex(async () => {
       try {
-        const r = await suppressSelected(ids, reason, note, `/systems/${systemId}`);
+        const r = await suppressSelected(ids, reason, note, path, `/systems/${systemId}`);
         setVexMsg(`✅ ${r.n}件を「影響なし」で登録しました（アラート停止・緊急件数から除外）`);
         setSel(new Set());
         router.refresh();
