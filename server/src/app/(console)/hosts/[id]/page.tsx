@@ -7,6 +7,7 @@ import type { HostState } from '@/lib/payload';
 import { hostAction, pollPullNow, registerSystem, savePullAide, unregisterSystem } from '../../actions';
 import { PendingButton } from '@/components/PendingButton';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
+import { taskKey } from '@/lib/tasks';
 import { AgentConfigCard, type AgentConfig } from '@/components/AgentConfigCard';
 import { ConfirmCollect } from '@/components/ConfirmCollect';
 import { agentDistDir } from '@/lib/agentdist';
@@ -52,6 +53,8 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   const by = Object.fromEntries(sev.map((r) => [r.severity, r.n]));
   const kevN = Number((await q<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='open' AND kev", [id]))[0].n);
   const fixedN = Number((await q<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='resolved' AND resolved_at IS NOT NULL", [id]))[0].n);
+  // OS (host-wide) KEV/critical, with a direct link to the OS remediation task (dnf/apt prompt).
+  const osRow = (await q<{ kev: string; crit: string }>("SELECT count(*) FILTER (WHERE kev) AS kev, count(*) FILTER (WHERE NOT kev AND severity='critical') AS crit FROM findings WHERE host_id=$1 AND status='open' AND '__os__' = ANY(systems)", [id]))[0];
   // Audit trail: config pushes, updates and collect requests are logged as 'ops' change events (with
   // the admin's email). Surface them so distribution is accountable.
   const ops = await q<{ ts: Date; title: string }>("SELECT ts, title FROM change_events WHERE host_id=$1 AND kind='ops' ORDER BY ts DESC LIMIT 20", [id]);
@@ -129,6 +132,17 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           </form>
         </Card>
       </div>
+      {(Number(osRow.kev) + Number(osRow.crit) > 0) && (
+        <Card title="OS（ホスト全体）の脆弱性">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span>OSパッケージ（kernel・glibc・openssl 等）の未対応：</span>
+            {Number(osRow.kev) > 0 && <b className="text-red-600">KEV {osRow.kev}</b>}
+            {Number(osRow.crit) > 0 && <b className="text-red-600">緊急 {osRow.crit}</b>}
+            <Link href={`/actions/${taskKey(h.id, '__os__')}`} className="btn ml-auto">OSの対応プロンプトへ →</Link>
+          </div>
+          <p className="mt-2 text-xs text-muted">{h.os_name?.toLowerCase().includes('ubuntu') || h.os_name?.toLowerCase().includes('debian') ? 'apt-get' : 'dnf'} での更新コマンドと、Claude Code 用プロンプトがそのページにあります。プロジェクトではなくホスト全体のOSが対象です。</p>
+        </Card>
+      )}
       <Card title={`プロジェクト（登録済み ${registered.length}／未登録の候補 ${candidates.length}）`}
         right={pull ? (
           <form action={pollPullNow}><input type="hidden" name="id" value={h.id} />
