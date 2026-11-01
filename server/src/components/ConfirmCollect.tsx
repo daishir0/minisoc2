@@ -2,13 +2,13 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { requestCollect } from '@/app/(console)/actions';
+import { requestCollect, pollPullNow } from '@/app/(console)/actions';
 
 // "対処を確認" — ask the host to collect now (real time if its control channel is live, otherwise on
 // the next check-in), then poll until a fresher report lands and refresh the page so the resolved
 // vulnerabilities show up without waiting for the hourly cycle.
-export function ConfirmCollect({ hostId, online, lastSeenAt, label = '対処を確認（今すぐ収集）' }: {
-  hostId: string; online: boolean; lastSeenAt: string | null; label?: string;
+export function ConfirmCollect({ hostId, online, lastSeenAt, label = '対処を確認（今すぐ収集）', compact = false, pull = false }: {
+  hostId: string; online: boolean; lastSeenAt: string | null; label?: string; compact?: boolean; pull?: boolean;
 }) {
   const router = useRouter();
   const [state, setState] = useState<'idle' | 'working' | 'done' | 'timeout'>('idle');
@@ -16,9 +16,13 @@ export function ConfirmCollect({ hostId, online, lastSeenAt, label = '対処を�
   const run = async () => {
     const before = lastSeenAt ? new Date(lastSeenAt).getTime() : 0;
     setState('working');
+    const fd = new FormData();
+    fd.set('id', hostId);
+    if (pull) { // server SSHes and collects synchronously
+      try { await pollPullNow(fd); setState('done'); router.refresh(); } catch { setState('timeout'); }
+      return;
+    }
     try {
-      const fd = new FormData();
-      fd.set('id', hostId);
       await requestCollect(fd);
     } catch { /* fall through to polling anyway */ }
     const deadline = Date.now() + (online ? 60_000 : 90_000);
@@ -36,6 +40,18 @@ export function ConfirmCollect({ hostId, online, lastSeenAt, label = '対処を�
     };
     setTimeout(poll, 3000);
   };
+
+  if (compact) {
+    const idle = pull ? '🔄 再スキャン' : '🔄 収集';
+    const txt = state === 'working' ? (pull ? 'スキャン中…' : '要求中…') : state === 'done' ? '✅ 反映' : state === 'timeout' ? '要求済み' : idle;
+    return (
+      <button type="button" onClick={(e) => { e.preventDefault(); e.stopPropagation(); void run(); }} disabled={state === 'working'}
+        title={pull ? 'SSHで今すぐ再スキャン（十数秒）' : online ? 'オンライン：数秒で反映' : '未接続：次回チェックインで実行'}
+        className="inline-flex items-center gap-1 rounded border border-line px-1.5 py-0.5 text-xs hover:bg-bg disabled:opacity-60">
+        {!pull && <span className={`h-1.5 w-1.5 rounded-full ${online ? 'bg-green-500' : 'bg-slate-400'}`} />}{txt}
+      </button>
+    );
+  }
 
   return (
     <div className="space-y-1">

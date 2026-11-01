@@ -99,6 +99,12 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
         </div>
       )}
       {s.root !== '__os__' && (
+        <Card title="今すぐ収集">
+          <p className="mb-2 text-sm text-muted">このシステムのホスト（{s.host}）を今すぐ収集します（収集はホスト単位なので配下の全システムに反映）。対処後の確認にも使えます。</p>
+          <ConfirmCollect hostId={s.host_id} pull={hinfo?.kind === 'pull'} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="このホストを今すぐ収集" />
+        </Card>
+      )}
+      {s.root !== '__os__' && (
         <Card title="このシステムに影響する脆弱性（KEV・緊急）">
           <ul className="divide-y divide-line text-sm">
             {[
@@ -130,12 +136,6 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
           </p>
           <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id}
             findings={picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev }))} />
-          {hinfo?.kind !== 'pull' && (
-            <div className="mt-4 border-t border-line pt-3">
-              <p className="mb-2 text-xs text-muted">対処（アップグレード）が終わったら、ここで収集を促すと解消が反映されます。</p>
-              <ConfirmCollect hostId={s.host_id} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="対処を確認（今すぐ収集）" />
-            </div>
-          )}
         </Card>
       )}
 

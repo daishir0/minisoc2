@@ -5,13 +5,14 @@ import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q } from '@/lib/db';
 import { FleetOps } from '@/components/FleetOps';
 import { TreeState } from '@/components/TreeState';
+import { ConfirmCollect } from '@/components/ConfirmCollect';
 
 export default async function HostsPage() {
   const hosts = await q<{
     id: string; name: string; hostname: string; kind: string; os_name: string; os_version: string; agent_version: string;
-    last_seen_at: Date | null; stale_alerted: boolean; disabled: boolean; c: string; k: string; total: string; errs: number | null; cand: string;
+    last_seen_at: Date | null; ws_seen_at: Date | null; stale_alerted: boolean; disabled: boolean; c: string; k: string; total: string; errs: number | null; cand: string;
   }>(
-    `SELECT h.id, h.name, h.hostname, h.kind, h.os_name, h.os_version, h.agent_version, h.last_seen_at, h.stale_alerted, h.disabled,
+    `SELECT h.id, h.name, h.hostname, h.kind, h.os_name, h.os_version, h.agent_version, h.last_seen_at, h.ws_seen_at, h.stale_alerted, h.disabled,
        count(f.id) FILTER (WHERE NOT f.kev AND f.severity='critical') AS c,
        count(f.id) FILTER (WHERE f.kev) AS k, count(f.id) AS total,
        (SELECT jsonb_array_length(errors) FROM reports r WHERE r.host_id=h.id ORDER BY received_at DESC LIMIT 1) AS errs,
@@ -64,6 +65,7 @@ export default async function HostsPage() {
                   <span className="ml-auto flex items-center gap-3">
                     <span className={Number(h.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {h.k}</span>
                     <span className={Number(h.c) ? 'font-bold text-red-600' : 'text-muted'}>緊急 {h.c}</span>
+                    {!h.disabled && <ConfirmCollect hostId={h.id} pull={h.kind === 'pull'} online={!!h.ws_seen_at && Date.now() - new Date(h.ws_seen_at).getTime() < 75_000} lastSeenAt={h.last_seen_at ? new Date(h.last_seen_at).toISOString() : null} compact />}
                   </span>
                 </summary>
                 <div className="border-t border-line py-2 pl-7 pr-3 text-sm">
