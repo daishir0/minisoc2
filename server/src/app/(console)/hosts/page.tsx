@@ -5,6 +5,7 @@ import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q } from '@/lib/db';
 import { FleetOps } from '@/components/FleetOps';
 import { TreeState } from '@/components/TreeState';
+import { taskKey } from '@/lib/tasks';
 import { ConfirmCollect } from '@/components/ConfirmCollect';
 
 export default async function HostsPage() {
@@ -32,6 +33,23 @@ export default async function HostsPage() {
   );
   const projByHost = new Map<string, typeof projects>();
   for (const p of projects) projByHost.set(p.host_id, [...(projByHost.get(p.host_id) ?? []), p]);
+  // OS (host-wide) units
+  const osRows = await q<{ host_id: string; k: string; c: string; hi: string }>(
+    `SELECT host_id, count(*) FILTER (WHERE kev) AS k, count(*) FILTER (WHERE NOT kev AND severity='critical') AS c,
+       count(*) FILTER (WHERE NOT kev AND severity='high') AS hi
+     FROM findings WHERE status='open' AND '__os__' = ANY(systems) GROUP BY host_id`);
+  const osByHost = new Map(osRows.map((r) => [r.host_id, r]));
+  // shared runtime envs (conda/venv) used by registered projects — each a remediation unit
+  const envs = await q<{ id: number; host_id: string; name: string; root: string; k: string; c: string; hi: string; total: string }>(
+    `SELECT s.id, s.host_id, s.name, s.root,
+       count(f.id) FILTER (WHERE f.kev) AS k, count(f.id) FILTER (WHERE NOT f.kev AND f.severity='critical') AS c,
+       count(f.id) FILTER (WHERE NOT f.kev AND f.severity='high') AS hi, count(f.id) AS total
+     FROM systems s
+     JOIN (SELECT DISTINCT host_id, runtime_root FROM host_services WHERE runtime_root IS NOT NULL) rt ON rt.host_id=s.host_id AND rt.runtime_root=s.root
+     LEFT JOIN findings f ON f.host_id=s.host_id AND s.root = ANY(f.systems) AND f.status='open'
+     WHERE s.root <> '__os__' GROUP BY s.id ORDER BY s.name`);
+  const envByHost = new Map<string, typeof envs>();
+  for (const e of envs) envByHost.set(e.host_id, [...(envByHost.get(e.host_id) ?? []), e]);
   const dot = (h: typeof hosts[number]) => h.disabled ? 'bg-slate-400' : h.stale_alerted ? 'bg-orange-500' : 'bg-green-500';
 
   return (
@@ -51,6 +69,8 @@ export default async function HostsPage() {
           <TreeState />
           {hosts.map((h) => {
             const projs = projByHost.get(h.id) ?? [];
+            const os = osByHost.get(h.id);
+            const envList = envByHost.get(h.id) ?? [];
             return (
               <details key={h.id} data-host={h.id} className={`rounded-lg border border-line bg-panel ${h.disabled ? 'opacity-60' : ''}`}>
                 <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-3 py-3 text-sm [&::-webkit-details-marker]:hidden">
@@ -73,6 +93,30 @@ export default async function HostsPage() {
                     {Number(h.cand) > 0 && <Link href={`/hosts/${h.id}`} className="text-xs text-accent">未登録の候補 {h.cand}件を登録 →</Link>}
                     <Link href={`/hosts/${h.id}`} className="ml-auto text-xs text-accent">ホストの詳細・設定 →</Link>
                   </div>
+                  {/* host-wide units: OS + shared runtime envs, each a remediation target */}
+                  {(os && (Number(os.k) + Number(os.c) > 0)) && (
+                    <div className="mb-1 flex flex-wrap items-center gap-2 border-l-2 border-red-300 pl-3 py-1">
+                      <span className="font-medium">OS（ホスト全体）</span>
+                      <span className="text-xs text-muted">kernel・glibc・openssl 等</span>
+                      <span className="ml-auto flex items-center gap-3 text-xs">
+                        <span className={Number(os.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {os.k}</span>
+                        <span className={Number(os.c) ? 'font-bold text-red-600' : 'text-muted'}>緊急 {os.c}</span>
+                        <Link href={`/actions/${taskKey(h.id, '__os__')}`} className="text-accent underline">対処 →</Link>
+                      </span>
+                    </div>
+                  )}
+                  {envList.filter((e) => Number(e.k) + Number(e.c) + Number(e.hi) > 0).map((e) => (
+                    <div key={e.id} className="mb-1 flex flex-wrap items-center gap-2 border-l-2 border-indigo-300 pl-3 py-1">
+                      <span className="font-medium">実行環境：<Link href={`/systems/${e.id}`} className="text-accent">{e.name}</Link></span>
+                      <span className="text-xs text-muted">共有ランタイム（複数プロジェクトで使用）</span>
+                      <span className="ml-auto flex items-center gap-3 text-xs">
+                        <span className={Number(e.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {e.k}</span>
+                        <span className={Number(e.c) ? 'font-bold text-red-600' : 'text-muted'}>緊急 {e.c}</span>
+                        <span className={Number(e.hi) ? 'text-yellow-600' : 'text-muted'}>高 {e.hi}</span>
+                        <Link href={`/systems/${e.id}`} className="text-accent underline">対処 →</Link>
+                      </span>
+                    </div>
+                  ))}
                   {projs.length === 0 ? (
                     <p className="border-l-2 border-line pl-3 text-xs text-muted">登録済みプロジェクトはありません。{Number(h.cand) > 0 ? <>「<Link href={`/hosts/${h.id}`} className="text-accent">未登録の候補 {h.cand}件</Link>」から登録してください。</> : 'このホストでプロジェクトは検出されていません。'}</p>
                   ) : (
