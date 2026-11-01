@@ -4,7 +4,8 @@ import { Card, Kev, Sev, ago, vulnLink } from '@/components/ui';
 import { q, q1 } from '@/lib/db';
 import { STACK_KEYS, detectStack } from '@/lib/systemmeta';
 import { taskKey } from '@/lib/tasks';
-import { addExclude, removeExclude, unregisterSystem } from '../../actions';
+import { addExclude, removeExclude, unregisterSystem, suppressFinding } from '../../actions';
+import { VEX_JUSTIFICATIONS, VEX_LABEL } from '@/lib/vex';
 import { PendingButton } from '@/components/PendingButton';
 import { SystemForm } from '../SystemForm';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
@@ -62,6 +63,13 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
     `SELECT f.id, f.vuln_id, f.pkg, ${sysVersion} AS version, f.fixed, f.severity, f.kev FROM findings f WHERE f.host_id=$1 AND f.status='open' AND $2 = ANY(f.systems)
      ORDER BY f.kev DESC, CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 300`,
     [s.host_id, s.root]);
+  // Per-CVE "not affected" (VEX) judgment for this system: open KEV/critical to judge, plus already
+  // suppressed ones (so they can be re-opened).
+  const judge = await q<{ id: string; vuln_id: string; pkg: string; version: string; severity: string; kev: boolean; status: string; suppress_reason: string | null; suppress_note: string | null }>(
+    `SELECT f.id, f.vuln_id, f.pkg, ${sysVersion} AS version, f.severity, f.kev, f.status, f.suppress_reason, f.suppress_note
+     FROM findings f WHERE f.host_id=$1 AND $2 = ANY(f.systems)
+       AND ((f.status='open' AND (f.kev OR f.severity='critical')) OR f.status='suppressed')
+     ORDER BY f.status, f.kev DESC, f.vuln_id LIMIT 200`, [s.host_id, s.root]);
   const hinfo = await q1<{ hostname: string; kind: string; ssh_host: string | null; last_seen_at: Date | null; ws_seen_at: Date | null;
     agent_meta: { invoke?: string; root?: boolean } | null; agent_config: { aide?: boolean; aidePaths?: string[] } | null }>(
     'SELECT h.hostname, h.kind, h.last_seen_at, h.ws_seen_at, h.agent_meta, h.agent_config, pt.ssh_host FROM hosts h LEFT JOIN pull_targets pt ON pt.host_id=h.id WHERE h.id=$1', [s.host_id]);
@@ -131,6 +139,45 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
               <ConfirmCollect hostId={s.host_id} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="対処を確認（今すぐ収集）" />
             </div>
           )}
+        </Card>
+      )}
+
+      {s.root !== '__os__' && judge.length > 0 && (
+        <Card title="個別判定（このシステムで影響なしなら登録してアラートを止める）">
+          <p className="mb-3 text-sm text-muted">
+            このシステムで<b>到達・悪用できない</b>と判断したCVEは「影響なし（VEX）」で登録してください。以後アラートされず、緊急件数からも外れ、判断理由は SBOM/VEX 出力に記録されます（「戻す」で再評価）。
+            <span className="block">※この抑止は「{s.name}」内のこのパッケージに効きます。複数プロジェクトで共有するパッケージの場合は他システムにも影響します。</span>
+          </p>
+          <ul className="divide-y divide-line text-sm">
+            {judge.map((f) => (
+              <li key={f.id} className="py-2">
+                <div className="flex flex-wrap items-center gap-2">
+                  {f.status === 'suppressed'
+                    ? <span className="rounded bg-slate-500 px-1.5 py-0.5 text-[10px] text-white">影響なし</span>
+                    : (f.kev ? <Kev /> : <Sev s={f.severity} />)}
+                  {vulnLink(f.vuln_id)}
+                  <span className="font-mono text-xs">{f.pkg} {f.version.slice(0, 24)}</span>
+                  {f.status === 'suppressed' && <span className="text-xs text-muted">理由：{VEX_LABEL[f.suppress_reason ?? ''] ?? f.suppress_reason}{f.suppress_note ? `（${f.suppress_note}）` : ''}</span>}
+                </div>
+                {f.status === 'suppressed' ? (
+                  <form action={suppressFinding} className="mt-1">
+                    <input type="hidden" name="id" value={f.id} /><input type="hidden" name="undo" value="1" /><input type="hidden" name="back" value={`/systems/${s.id}`} />
+                    <button className="btn-ghost text-xs text-accent">未対応に戻す（再評価）</button>
+                  </form>
+                ) : (
+                  <form action={suppressFinding} className="mt-1 flex flex-wrap items-center gap-2">
+                    <input type="hidden" name="id" value={f.id} /><input type="hidden" name="back" value={`/systems/${s.id}`} />
+                    <select name="reason" required className="input text-xs sm:w-auto">
+                      <option value="">理由を選択…</option>
+                      {VEX_JUSTIFICATIONS.map((j) => <option key={j} value={j}>{VEX_LABEL[j]}</option>)}
+                    </select>
+                    <input name="note" className="input text-xs sm:w-64" placeholder="メモ（任意・例：node実行環境なし）" />
+                    <button className="btn-ghost text-xs">影響なしで登録</button>
+                  </form>
+                )}
+              </li>
+            ))}
+          </ul>
         </Card>
       )}
 

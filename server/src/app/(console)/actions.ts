@@ -283,6 +283,8 @@ export async function suppressFinding(fd: FormData): Promise<void> {
     if (r[0]) await opsEvent(`${r[0].vuln_id}（${r[0].pkg}）を「影響なし」と判断（${reason}）`, r[0].host_id);
   }
   revalidatePath('/findings');
+  const back = String(fd.get('back') ?? '');
+  if (/^\/[A-Za-z0-9/_-]+$/.test(back)) revalidatePath(back);
 }
 
 export async function addWatch(_: Result, fd: FormData): Promise<Result> {
