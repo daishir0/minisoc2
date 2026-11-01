@@ -82,13 +82,16 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   const osPkgNames = [...new Set(chosen.map((f) => f.pkg))];
   const cveSummary = cves.length <= 6 ? cves.join('、') : `${cves.slice(0, 6).join('、')} 他${cves.length - 6}件`;
   const kevN2 = chosen.filter((f) => f.kev).length;
+  // Use the actual installed kernel METApackages (no version digits), e.g. linux-aws / linux-image-aws
+  // on Ubuntu AWS — not a guessed Debian name. Upgrading the meta pulls the latest ABI.
+  const kernelMetas = osKernelPkgs.filter((n) => !/\d/.test(n));
   const kernelCmd = pm === 'apt'
-    ? 'sudo apt-get install --only-upgrade linux-image-$(dpkg --print-architecture) linux-headers-$(dpkg --print-architecture)'
+    ? (kernelMetas.length ? `sudo apt-get install --only-upgrade ${kernelMetas.join(' ')}` : 'sudo apt-get install --only-upgrade <カーネルのメタパッケージ（例 linux-aws / linux-generic）>')
     : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''} "kernel*"`;
   const otherCmd = osOtherPkgs.length
     ? (pm === 'apt' ? `sudo apt-get install --only-upgrade ${osOtherPkgs.slice(0, 20).join(' ')}` : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''} ${osOtherPkgs.slice(0, 20).join(' ')}`)
     : '';
-  const dryRun = pm === 'apt' ? 'apt list --upgradable && sudo apt-get -s upgrade' : `dnf check-update --security${osId === 'amzn' ? ' --releasever=latest' : ''}`;
+  const dryRun = pm === 'apt' ? 'sudo apt-get update && apt list --upgradable && sudo apt-get -s upgrade' : `dnf check-update --security${osId === 'amzn' ? ' --releasever=latest' : ''}`;
   const osPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
     `ホスト「${host}」の **OS パッケージ（ホスト全体）** について、minisoc2 が ${cves.length} 件（${kevN2 ? `KEV ${kevN2}・` : ''}緊急含む）を検出しています。これは**対処の起点リスト**です。件数・CVEを鵜呑みにせず、まず実データで残存を確認してから、安全に適用してください。`,
     ``,
