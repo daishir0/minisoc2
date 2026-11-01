@@ -30,7 +30,15 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   host: string; address: string; path: string; system: string; systemId: number; osId?: string; findings: PickFinding[];
 }) {
   const isOs = osId !== undefined;
-  const pm = osId && ['debian', 'ubuntu'].includes(osId) ? 'apt' : 'dnf';
+  const oid = osId ?? '';
+  // Map the OS to its package manager so the generated commands are correct across distros.
+  const mgr: 'apt' | 'dnf' | 'apk' | 'zypper' | 'unknown' =
+    ['debian', 'ubuntu', 'raspbian', 'linuxmint', 'pop'].includes(oid) ? 'apt'
+      : ['amzn', 'rhel', 'centos', 'rocky', 'almalinux', 'fedora', 'ol', 'oracle'].includes(oid) ? 'dnf'
+        : oid === 'alpine' ? 'apk'
+          : /suse|sles/.test(oid) ? 'zypper'
+            : 'unknown';
+  const pm = mgr; // back-compat alias used below
   const [sel, setSel] = useState<Set<string>>(() => new Set(findings.filter((f) => f.kev || f.severity === 'critical').map((f) => f.id)));
   const [copied, setCopied] = useState(false);
   const router = useRouter();
@@ -83,15 +91,21 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   const cveSummary = cves.length <= 6 ? cves.join('、') : `${cves.slice(0, 6).join('、')} 他${cves.length - 6}件`;
   const kevN2 = chosen.filter((f) => f.kev).length;
   // Use the actual installed kernel METApackages (no version digits), e.g. linux-aws / linux-image-aws
-  // on Ubuntu AWS — not a guessed Debian name. Upgrading the meta pulls the latest ABI.
+  // on Ubuntu AWS, linux-image-amd64 on Debian, linux-lts on Alpine — never a guessed name.
   const kernelMetas = osKernelPkgs.filter((n) => !/\d/.test(n));
-  const kernelCmd = pm === 'apt'
-    ? (kernelMetas.length ? `sudo apt-get install --only-upgrade ${kernelMetas.join(' ')}` : 'sudo apt-get install --only-upgrade <カーネルのメタパッケージ（例 linux-aws / linux-generic）>')
-    : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''} "kernel*"`;
-  const otherCmd = osOtherPkgs.length
-    ? (pm === 'apt' ? `sudo apt-get install --only-upgrade ${osOtherPkgs.slice(0, 20).join(' ')}` : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''} ${osOtherPkgs.slice(0, 20).join(' ')}`)
-    : '';
-  const dryRun = pm === 'apt' ? 'sudo apt-get update && apt list --upgradable && sudo apt-get -s upgrade' : `dnf check-update --security${osId === 'amzn' ? ' --releasever=latest' : ''}`;
+  const rel = oid === 'amzn' ? ' --releasever=latest' : ''; // AL2023 only needs this; harmless note otherwise
+  const others = osOtherPkgs.slice(0, 20).join(' ');
+  const km = kernelMetas.join(' ') || '<カーネルのメタパッケージ>';
+  const CMDS = {
+    apt: { kernel: `sudo apt-get install --only-upgrade ${km}`, other: `sudo apt-get install --only-upgrade ${others}`, dry: 'sudo apt-get update && apt list --upgradable && sudo apt-get -s upgrade' },
+    dnf: { kernel: `sudo dnf upgrade${rel} "kernel*"`, other: `sudo dnf upgrade${rel} ${others}`, dry: `sudo dnf check-update --security${rel}` },
+    apk: { kernel: `sudo apk upgrade ${km}`, other: `sudo apk upgrade ${others}`, dry: "sudo apk update && apk version -l '<'" },
+    zypper: { kernel: `sudo zypper update ${km}`, other: `sudo zypper update ${others}`, dry: 'sudo zypper refresh && zypper list-updates' },
+    unknown: { kernel: '（このOSのパッケージマネージャでカーネルを最新へ）', other: '（このOSのパッケージマネージャで該当パッケージを更新）', dry: '（このOSのパッケージマネージャで未適用のセキュリティ更新を確認）' },
+  }[mgr];
+  const kernelCmd = CMDS.kernel;
+  const otherCmd = osOtherPkgs.length ? CMDS.other : '';
+  const dryRun = CMDS.dry;
   const osPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
     `ホスト「${host}」の **OS パッケージ（ホスト全体）** について、minisoc2 が ${cves.length} 件（${kevN2 ? `KEV ${kevN2}・` : ''}緊急含む）を検出しています。これは**対処の起点リスト**です。件数・CVEを鵜呑みにせず、まず実データで残存を確認してから、安全に適用してください。`,
     ``,
@@ -111,6 +125,8 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
     ...(osOtherPkgs.length ? [`    - その他OSパッケージ（各々）： ${otherCmd}`] : []),
     `4. **再起動は kernel を更新した場合のみ**（\`sudo reboot\`）。配下サービスが停止するため時間帯を合意。起動不能時は旧カーネルで起動 or スナップショットから復元。`,
     `5. 完了後、minisoc2 の「今すぐ収集」で確認。**kernel系は再起動でまとめて／非kernelは適用したものから**解消します。`,
+    ...(mgr === 'unknown' ? [`※このOS（${oid || '不明'}）のパッケージマネージャを自動判定できませんでした。上のコマンドは雛形です。dnf/apt/apk/zypper 等、実際のツールに読み替えてください。`] : []),
+    `※ root 権限が無い環境（共用ホスティング等）では CLI 更新ができないことがあります。その場合はホスティングのコントロールパネルで更新してください。`,
     ``,
     `# 参考（minisoc2 の検出・起点）`,
     `- 対象パッケージ：${osPkgNames.slice(0, 12).join('、')}${osPkgNames.length > 12 ? ` 他${osPkgNames.length - 12}件` : ''}`,
