@@ -67,9 +67,9 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
   // judge live in the remediation picker; these are the ones already marked, with an undo.
   const vexed = await q<{ id: string; vuln_id: string; pkg: string; reason: string; note: string | null }>(
     'SELECT id, vuln_id, pkg, reason, note FROM finding_vex WHERE host_id=$1 AND system_root=$2 ORDER BY vuln_id', [s.host_id, s.root]);
-  const hinfo = await q1<{ hostname: string; kind: string; ssh_host: string | null; last_seen_at: Date | null; ws_seen_at: Date | null;
+  const hinfo = await q1<{ hostname: string; kind: string; os_id: string | null; ssh_host: string | null; last_seen_at: Date | null; ws_seen_at: Date | null;
     agent_meta: { invoke?: string; root?: boolean } | null; agent_config: { aide?: boolean; aidePaths?: string[] } | null }>(
-    'SELECT h.hostname, h.kind, h.last_seen_at, h.ws_seen_at, h.agent_meta, h.agent_config, pt.ssh_host FROM hosts h LEFT JOIN pull_targets pt ON pt.host_id=h.id WHERE h.id=$1', [s.host_id]);
+    'SELECT h.hostname, h.kind, h.os_id, h.last_seen_at, h.ws_seen_at, h.agent_meta, h.agent_config, pt.ssh_host FROM hosts h LEFT JOIN pull_targets pt ON pt.host_id=h.id WHERE h.id=$1', [s.host_id]);
   const address = hinfo?.kind === 'pull' ? (hinfo.ssh_host ?? '') : (hinfo?.hostname ?? '');
   const wsOnline = !!hinfo?.ws_seen_at && Date.now() - new Date(hinfo.ws_seen_at).getTime() < 75_000;
   // File-integrity coverage for this project: is its root under the host's AIDE paths? Adding a path
@@ -98,12 +98,10 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
           </div>
         </div>
       )}
-      {s.root !== '__os__' && (
-        <Card title="今すぐ収集">
-          <p className="mb-2 text-sm text-muted">このシステムのホスト（{s.host}）を今すぐ収集します（収集はホスト単位なので配下の全システムに反映）。対処後の確認にも使えます。</p>
-          <ConfirmCollect hostId={s.host_id} pull={hinfo?.kind === 'pull'} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="このホストを今すぐ収集" />
-        </Card>
-      )}
+      <Card title="今すぐ収集">
+        <p className="mb-2 text-sm text-muted">このホスト（{s.host}）を今すぐ収集します（収集はホスト単位なので配下の全システム・OSに反映）。対処後の確認にも使えます。</p>
+        <ConfirmCollect hostId={s.host_id} pull={hinfo?.kind === 'pull'} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="このホストを今すぐ収集" />
+      </Card>
       {s.root !== '__os__' && (
         <Card title="このシステムに影響する脆弱性（KEV・緊急）">
           <ul className="divide-y divide-line text-sm">
@@ -129,17 +127,17 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
         </Card>
       )}
 
-      {s.root !== '__os__' && picks.length > 0 && (
+      {picks.length > 0 && (
         <Card title="Claude Code で解消（CVEを選んでプロンプト生成）">
           <p className="mb-3 text-sm text-muted">
             解消したいCVEにチェックを入れると、<b>対象ホスト上で <code>claude</code>（Claude Code）に貼り付けて実行できる</b>、バックアップ前提の安全なアップグレード提案プロンプトを生成します。内容を確認のうえ対象ホストで実行してください（minisoc2 がサーバーから実行することはありません）。
           </p>
-          <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id}
+          <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={s.root === '__os__' ? (hinfo?.os_id ?? '') : undefined}
             findings={picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev }))} />
         </Card>
       )}
 
-      {s.root !== '__os__' && vexed.length > 0 && (
+      {vexed.length > 0 && (
         <Card title={`影響なしに登録済み（${vexed.length}）`}>
           <p className="mb-3 text-sm text-muted">このシステムで「影響なし」と判断済みのCVEです。<b>このシステムだけ</b>アラート・緊急件数から外れます（同じパッケージを使う他システムには影響しません）。判断理由は SBOM/VEX 出力に記録。「戻す」で再評価に戻せます（次回の照合で反映）。</p>
           <ul className="divide-y divide-line text-sm">

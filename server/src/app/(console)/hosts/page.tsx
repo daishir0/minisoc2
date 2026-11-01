@@ -34,10 +34,11 @@ export default async function HostsPage() {
   const projByHost = new Map<string, typeof projects>();
   for (const p of projects) projByHost.set(p.host_id, [...(projByHost.get(p.host_id) ?? []), p]);
   // OS (host-wide) units
-  const osRows = await q<{ host_id: string; k: string; c: string; hi: string }>(
-    `SELECT host_id, count(*) FILTER (WHERE kev) AS k, count(*) FILTER (WHERE NOT kev AND severity='critical') AS c,
+  const osRows = await q<{ host_id: string; sid: number | null; k: string; c: string; hi: string }>(
+    `SELECT f.host_id, (SELECT id FROM systems s WHERE s.host_id=f.host_id AND s.root='__os__') AS sid,
+       count(*) FILTER (WHERE kev) AS k, count(*) FILTER (WHERE NOT kev AND severity='critical') AS c,
        count(*) FILTER (WHERE NOT kev AND severity='high') AS hi
-     FROM findings WHERE status='open' AND '__os__' = ANY(systems) GROUP BY host_id`);
+     FROM findings f WHERE status='open' AND '__os__' = ANY(systems) GROUP BY f.host_id`);
   const osByHost = new Map(osRows.map((r) => [r.host_id, r]));
   // shared runtime envs (conda/venv) used by registered projects — each a remediation unit
   const envs = await q<{ id: number; host_id: string; name: string; root: string; k: string; c: string; hi: string; total: string }>(
@@ -101,7 +102,7 @@ export default async function HostsPage() {
                       <span className="ml-auto flex items-center gap-3 text-xs">
                         <span className={Number(os.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {os.k}</span>
                         <span className={Number(os.c) ? 'font-bold text-red-600' : 'text-muted'}>緊急 {os.c}</span>
-                        <Link href={`/actions/${taskKey(h.id, '__os__')}`} className="text-accent underline">対処 →</Link>
+                        <Link href={os.sid ? `/systems/${os.sid}` : `/actions/${taskKey(h.id, '__os__')}`} className="text-accent underline">対処 →</Link>
                       </span>
                     </div>
                   )}

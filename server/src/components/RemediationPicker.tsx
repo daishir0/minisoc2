@@ -26,9 +26,11 @@ export interface PickFinding {
 
 // Lets the user tick specific CVEs on a project and generates a copy-paste Claude Code prompt that
 // asks for a safe, backup-first upgrade plan. Advisory only — the human runs Claude Code on the host.
-export function RemediationPicker({ host, address, path, system, systemId, findings }: {
-  host: string; address: string; path: string; system: string; systemId: number; findings: PickFinding[];
+export function RemediationPicker({ host, address, path, system, systemId, osId, findings }: {
+  host: string; address: string; path: string; system: string; systemId: number; osId?: string; findings: PickFinding[];
 }) {
+  const isOs = osId !== undefined;
+  const pm = osId && ['debian', 'ubuntu'].includes(osId) ? 'apt' : 'dnf';
   const [sel, setSel] = useState<Set<string>>(() => new Set(findings.filter((f) => f.kev || f.severity === 'critical').map((f) => f.id)));
   const [copied, setCopied] = useState(false);
   const router = useRouter();
@@ -72,7 +74,29 @@ export function RemediationPicker({ host, address, path, system, systemId, findi
   }
   const pkgs = [...byPkg.values()].map((e) => ({ ...e, target: recommendedTarget(e.version, e.fixes) }));
 
-  const prompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
+  // OS packages are fixed with the system package manager (apt/dnf), not pip/npm — generate a distinct prompt.
+  const osPkgList = [...new Set(chosen.map((f) => f.pkg.replace(/^(kernel|linux)[\w.-]*$/, (m) => (m.startsWith('kernel') ? 'kernel*' : 'linux-*'))))].slice(0, 20).join(' ');
+  const osCmd = pm === 'apt' ? `sudo apt-get update && sudo apt-get install --only-upgrade ${osPkgList}` : `sudo dnf upgrade${osId === 'amzn' ? ' --releasever=latest' : ''} ${osPkgList}`;
+  const osPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
+    `ホスト「${host}」の **OS パッケージ（ホスト全体）** について、脆弱性 ${cves.join('、')} の対応可否を判断し、必要なら安全に解消してください。対象はアプリの依存ではなく OS のパッケージ（kernel 等）です。`,
+    ``,
+    `# 対象パッケージ（現状 → 修正版）`,
+    ...pkgs.map((p) => `- ${p.pkg}: ${p.version || '(現行不明)'}${p.fixes.length ? ` → ${[...new Set(p.fixes)].slice(0, 2).join(' / ')}` : '（修正版は配布元未リリースの可能性）'}${p.kev ? '  ［KEV: 悪用確認済み・最優先］' : ''}`),
+    ``,
+    `# まず判定`,
+    `各CVEがこのホストで実際に該当・到達可能かを確認（稼働中カーネル／該当機能の使用有無 等）。結論を最初に明示：(a) 修正する ／ (b) 影響なし＝対処不要（理由＋VEX区分 code_not_present / code_not_reachable / requires_configuration 等）／ (c) 要確認。`,
+    ``,
+    `# (a) 修正する場合`,
+    `1. 次のコマンドで OS の該当パッケージを更新（パッケージ名は実際の導入名に合わせて調整可）：`,
+    ``,
+    `    ${osCmd}`,
+    ``,
+    `2. kernel を含む場合は、更新後に再起動が必要です（\`sudo reboot\`。利用者影響があれば事前合意）。`,
+    `3. 変更前のバックアップ／スナップショットとロールバック手順を用意。`,
+    `4. 実行は人間の承認後。配布元が修正版をまだ出していない（未リリース）場合は、無理に上げず「要確認」として報告。`,
+    `5. 完了後、minisoc2 の「今すぐ収集」で解消を確認する。`,
+  ].join('\n');
+  const appPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
     `${host} のホスト（ホスト名：${host}、接続先：${address || '不明'}）の、${path} にあるシステム「${system}」について、脆弱性 ${cves.join('、')} の対応可否を判断し、必要なら安全に解消してください。`,
     ``,
     `# 対象パッケージ（現状 → 修正版の目安）`,
@@ -97,6 +121,7 @@ export function RemediationPicker({ host, address, path, system, systemId, findi
     `5. 実行は人間の承認後。破壊的操作やサービス停止は必要最小限に。`,
     `6. 完了後、対象ホストで収集を実行（minisoc2 画面の「今すぐ収集」ボタンでも可）し、minisoc2 上で解消を確認する。`,
   ].join('\n');
+  const prompt = isOs ? osPrompt : appPrompt;
 
   const copy = async () => {
     try { await navigator.clipboard.writeText(prompt); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked */ }
