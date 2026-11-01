@@ -48,23 +48,37 @@ function isVenv(dir: string): boolean {
   return existsSync(join(dir, 'pyvenv.cfg'));
 }
 
-// Conda / Anaconda environments shared by several apps ("*" allowed in the last segment).
-export const DEFAULT_PYTHON_ENVS = ['~/anaconda3', '~/anaconda3/envs/*', '~/miniconda3', '~/miniconda3/envs/*', '~/miniforge3', '~/miniforge3/envs/*'];
+// Conda / Anaconda / miniforge environments shared by several apps. The agent often runs as root, so
+// "~" (root's home) is not where users keep their envs — glob every user's home and the common system
+// locations too. "*" may appear in any segment.
+export const DEFAULT_PYTHON_ENVS = [
+  '~/anaconda3', '~/anaconda3/envs/*', '~/miniconda3', '~/miniconda3/envs/*', '~/miniforge3', '~/miniforge3/envs/*',
+  '/home/*/anaconda3', '/home/*/anaconda3/envs/*', '/home/*/miniconda3', '/home/*/miniconda3/envs/*', '/home/*/miniforge3', '/home/*/miniforge3/envs/*',
+  '/home/*/.conda/envs/*', '/opt/conda', '/opt/conda/envs/*', '/opt/miniforge3', '/opt/miniforge3/envs/*',
+];
 
+// Expand a glob with "*" in any segment (e.g. /home/*/miniforge3/envs/*) to existing directories.
 export function expandEnvs(patterns: string[]): string[] {
-  const out: string[] = [];
+  const out = new Set<string>();
+  const walk = (segs: string[], prefix: string) => {
+    if (!segs.length) { if (existsSync(prefix)) out.add(prefix); return; }
+    const [head, ...rest] = segs;
+    if (head === '*') {
+      try {
+        for (const d of readdirSync(prefix || '/', { withFileTypes: true })) {
+          if (d.isDirectory() && !d.name.startsWith('.')) walk(rest, join(prefix || '/', d.name));
+        }
+      } catch { /* missing */ }
+    } else {
+      walk(rest, prefix ? join(prefix, head) : '/' + head);
+    }
+  };
   for (const raw of patterns) {
     const p = raw.replace(/^~(?=\/|$)/, homedir());
-    if (p.endsWith('/*')) {
-      const base = p.slice(0, -2);
-      try {
-        for (const d of readdirSync(base)) if (!d.startsWith('.')) out.push(join(base, d));
-      } catch {
-        /* missing */
-      }
-    } else if (existsSync(p)) out.push(p);
+    if (!p.startsWith('/')) continue;
+    walk(p.split('/').filter(Boolean), '');
   }
-  return out;
+  return [...out];
 }
 
 export function findLockfiles(roots: string[], skipDirs: string[], errors: CollectError[], venvs: string[] = [], projectDirs?: Set<string>): string[] {

@@ -151,7 +151,16 @@ async function candidates(hostId: string): Promise<Map<string, Candidate>> {
   // as candidates for approval and produce no findings until registered. OS packages ('__os__')
   // are host-level and always evaluated, since the host itself is registered.
   const registered = new Set((await q<{ root: string }>("SELECT root FROM systems WHERE host_id=$1 AND origin='manual'", [hostId])).map((r) => r.root));
-  const evaluated = (x: string) => x === OS_SYSTEM || (registered.has(x) && !ignored.has(x));
+  // A shared Python env (conda/venv) is evaluated when a REGISTERED project actually runs in it (a
+  // service of that project points to it). So the env's installed packages are checked once and shown
+  // on each project as its "実行環境" — real installed versions, no per-project duplication.
+  const evalRuntimes = new Set(
+    (await q<{ runtime_root: string }>(
+      'SELECT DISTINCT runtime_root FROM host_services WHERE host_id=$1 AND runtime_root IS NOT NULL AND system_root = ANY($2::text[])',
+      [hostId, [...registered]],
+    )).map((r) => r.runtime_root),
+  );
+  const evaluated = (x: string) => x === OS_SYSTEM || ((registered.has(x) || evalRuntimes.has(x)) && !ignored.has(x));
   // Per-system "not affected" judgments: remove the judged system from a finding so other systems that
   // share the same package keep it. If every system of a finding is judged out, the finding disappears.
   const vex = new Set(
