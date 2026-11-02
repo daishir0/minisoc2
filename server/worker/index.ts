@@ -122,26 +122,28 @@ async function syncUbuntuOs() {
   for (const h of hosts) {
     const codename = UBUNTU_CODENAME[h.os_version];
     if (!codename) continue;
-    const osPkgs = await q<{ name: string; version: string }>("SELECT name, version FROM host_packages WHERE host_id=$1 AND ecosystem LIKE 'Ubuntu:%'", [h.id]);
-    if (!osPkgs.length) continue;
-    const cves = await q<{ vuln_id: string }>("SELECT DISTINCT vuln_id FROM findings WHERE host_id=$1 AND status='open' AND ecosystem LIKE 'Ubuntu:%' AND '__os__' = ANY(systems)", [h.id]);
-    const fixed: string[] = [];
-    for (const { vuln_id } of cves) {
-      const cve = vuln_id.replace(/^(UBUNTU|DEBIAN)-/, '');
+    // Judge EACH finding's own package (single-package verdict) so a different kernel line's leftover
+    // package can't make a flavor-fixed CVE look vulnerable.
+    const findings = await q<{ vuln_id: string; pkg: string; version: string }>("SELECT vuln_id, pkg, version FROM findings WHERE host_id=$1 AND status='open' AND ecosystem LIKE 'Ubuntu:%' AND '__os__' = ANY(systems)", [h.id]);
+    const fixed: { vuln_id: string; pkg: string }[] = [];
+    for (const f of findings) {
+      const cve = f.vuln_id.replace(/^(UBUNTU|DEBIAN)-/, '');
       if (!/^CVE-\d{4}-\d+$/.test(cve)) continue;
-      if (!cache.has(cve)) { cache.set(cve, await fetchUbuntuCve(cve)); await new Promise((r) => setTimeout(r, 150)); }
+      if (!cache.has(cve)) { cache.set(cve, await fetchUbuntuCve(cve)); await new Promise((r) => setTimeout(r, 120)); }
       const uc = cache.get(cve);
       if (!uc) continue;
-      const v = ubuntuVerdict(codename, osPkgs, uc);
-      if (v.matched && !v.red.length && v.green.length) fixed.push(vuln_id); // vendor says fixed at <= installed
+      const ver = f.version.split(',')[0].trim();
+      const v = ubuntuVerdict(codename, [{ name: f.pkg, version: ver }], uc);
+      if (v.matched && !v.red.length && v.green.length) fixed.push({ vuln_id: f.vuln_id, pkg: f.pkg }); // vendor says this pkg is fixed at <= installed
     }
-    const cur = (await q<{ vuln_id: string }>('SELECT vuln_id FROM host_os_fixed WHERE host_id=$1', [h.id])).map((r) => r.vuln_id);
-    const same = cur.length === fixed.length && fixed.every((x) => cur.includes(x));
+    const cur = (await q<{ vuln_id: string; pkg: string }>('SELECT vuln_id, pkg FROM host_os_fixed WHERE host_id=$1', [h.id])).map((r) => `${r.vuln_id}\u0000${r.pkg}`);
+    const want = fixed.map((x) => `${x.vuln_id}\u0000${x.pkg}`);
+    const same = cur.length === want.length && want.every((x) => cur.includes(x));
     if (!same) {
       await q('DELETE FROM host_os_fixed WHERE host_id=$1', [h.id]);
-      for (const vid of fixed) await q('INSERT INTO host_os_fixed(host_id, vuln_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [h.id, vid]);
+      for (const x of fixed) await q('INSERT INTO host_os_fixed(host_id, vuln_id, pkg) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [h.id, x.vuln_id, x.pkg]);
       await q('UPDATE hosts SET needs_match=true WHERE id=$1', [h.id]);
-      log(`ubuntu-os ${h.id.slice(0, 8)}: ${fixed.length} OS CVE already-fixed per vendor (suppressing OSV false positives)`);
+      log(`ubuntu-os ${h.id.slice(0, 8)}: ${fixed.length} OS findings already-fixed per vendor (suppressing OSV false positives)`);
     }
   }
 }

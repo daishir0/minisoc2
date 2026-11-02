@@ -171,7 +171,7 @@ async function candidates(hostId: string): Promise<Map<string, Candidate>> {
   // Ubuntu/Debian OS CVEs the vendor tracker confirms already fixed on this host — suppress the OSV
   // false positives (OSV lists them without a fixed version). Compared on the CVE id, prefix-stripped.
   const normCve = (s: string) => s.replace(/^(UBUNTU|DEBIAN)-/, '');
-  const osFixed = new Set((await q<{ vuln_id: string }>('SELECT vuln_id FROM host_os_fixed WHERE host_id=$1', [hostId])).map((r) => normCve(r.vuln_id)));
+  const osFixed = new Set((await q<{ vuln_id: string; pkg: string }>('SELECT vuln_id, pkg FROM host_os_fixed WHERE host_id=$1', [hostId])).map((r) => `${normCve(r.vuln_id)}\u0000${r.pkg}`));
   const add = (c: Omit<Candidate, 'versions' | 'fixed' | 'systems' | 'cvss'> & { version: string; fixed: string[]; systems: string[]; cvss?: number | null }) => {
     const systems = c.systems.filter(evaluated).filter((x) => !vex.has(`${x}\u0000${c.vulnId}\u0000${c.ecosystem}\u0000${c.pkg}`));
     if (c.systems.length && !systems.length) return;
@@ -193,7 +193,7 @@ async function candidates(hostId: string): Promise<Map<string, Candidate>> {
   for (const r of osv) {
     const vid = preferCve(r.id, r.aliases);
     // vendor tracker is authoritative for OS packages: drop OSV OS CVEs it confirms already fixed here
-    if (/^(Ubuntu|Debian):/.test(r.ecosystem) && osFixed.has(normCve(vid))) continue;
+    if (/^(Ubuntu|Debian):/.test(r.ecosystem) && osFixed.has(`${normCve(vid)}\u0000${r.name}`)) continue;
     add({ vulnId: vid, ecosystem: r.ecosystem, pkg: r.name, version: r.version, fixed: r.fixed[`${r.ecosystem}/${r.name}`] ?? [], severity: r.severity, source: 'osv', systems: r.systems ?? [], cvss: r.cvss == null ? null : Number(r.cvss) });
   }
   const adv = await q<{ vuln_id: string; severity: Severity; pkg: string; fixed: string; installed: string | null }>(
