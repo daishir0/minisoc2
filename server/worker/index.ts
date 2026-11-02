@@ -16,6 +16,7 @@ import { sendDigest } from '../src/lib/digest';
 import { NVD_DELAY_MS, nvdStep } from '../src/lib/nvd';
 import { getPolicy, getSetting, setSetting } from '../src/lib/settings';
 import { startWsHub } from './ws-hub';
+import { fetchUbuntuCve, ubuntuVerdict, UBUNTU_CODENAME } from '../src/lib/distro';
 
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? '').replace(/\/+$/, '');
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
@@ -101,6 +102,39 @@ async function watchCveAlerts() {
       }
     } catch (e) {
       log(`watch lookup ${cve} failed: ${errMsg(e)}`);
+    }
+  }
+}
+
+// Ubuntu/Debian OS CVEs from OSV often lack a fixed version → shown as open even when already patched.
+// Consult the vendor tracker (authority) and record CVEs confirmed FIXED on the host so matching can
+// suppress those OSV false positives. Only "already fixed" is recorded; genuinely-vulnerable stay.
+async function syncUbuntuOs() {
+  const hosts = await q<{ id: string; os_version: string }>("SELECT id, os_version FROM hosts WHERE os_id IN ('ubuntu','debian') AND NOT disabled AND baseline_done");
+  const cache = new Map<string, Awaited<ReturnType<typeof fetchUbuntuCve>>>();
+  for (const h of hosts) {
+    const codename = UBUNTU_CODENAME[h.os_version];
+    if (!codename) continue;
+    const osPkgs = await q<{ name: string; version: string }>("SELECT name, version FROM host_packages WHERE host_id=$1 AND ecosystem LIKE 'Ubuntu:%'", [h.id]);
+    if (!osPkgs.length) continue;
+    const cves = await q<{ vuln_id: string }>("SELECT DISTINCT vuln_id FROM findings WHERE host_id=$1 AND status='open' AND ecosystem LIKE 'Ubuntu:%' AND '__os__' = ANY(systems)", [h.id]);
+    const fixed: string[] = [];
+    for (const { vuln_id } of cves) {
+      const cve = vuln_id.replace(/^(UBUNTU|DEBIAN)-/, '');
+      if (!/^CVE-\d{4}-\d+$/.test(cve)) continue;
+      if (!cache.has(cve)) { cache.set(cve, await fetchUbuntuCve(cve)); await new Promise((r) => setTimeout(r, 150)); }
+      const uc = cache.get(cve);
+      if (!uc) continue;
+      const v = ubuntuVerdict(codename, osPkgs, uc);
+      if (v.matched && !v.red.length && v.green.length) fixed.push(vuln_id); // vendor says fixed at <= installed
+    }
+    const cur = (await q<{ vuln_id: string }>('SELECT vuln_id FROM host_os_fixed WHERE host_id=$1', [h.id])).map((r) => r.vuln_id);
+    const same = cur.length === fixed.length && fixed.every((x) => cur.includes(x));
+    if (!same) {
+      await q('DELETE FROM host_os_fixed WHERE host_id=$1', [h.id]);
+      for (const vid of fixed) await q('INSERT INTO host_os_fixed(host_id, vuln_id) VALUES ($1,$2) ON CONFLICT DO NOTHING', [h.id, vid]);
+      await q('UPDATE hosts SET needs_match=true WHERE id=$1', [h.id]);
+      log(`ubuntu-os ${h.id.slice(0, 8)}: ${fixed.length} OS CVE already-fixed per vendor (suppressing OSV false positives)`);
     }
   }
 }
@@ -233,6 +267,7 @@ async function tick(n: number) {
     ['staleHosts', staleHosts, 5],
     ['feeds', feeds, 10],
     ['sigmaSync', sigmaSync, 60],
+    ['syncUbuntuOs', syncUbuntuOs, 60],
     ['watchCveAlerts', watchCveAlerts, 30],
     ['pollPullHosts', pollPullHosts, 5],
     ['dailyRematch', dailyRematch, 10],
