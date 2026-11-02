@@ -45,12 +45,19 @@ async function feeds() {
       log(`kev sync failed: ${errMsg(e)}`);
     }
   }
-  // Stale feeds silently produce false negatives (the Trivy DB lesson), so they are alerts.
+  // Stale feeds silently produce false negatives (the Trivy DB lesson), so they are alerts — but the
+  // threshold must match each feed's own cadence. Sigma rules are synced weekly, so 48h is a false
+  // alarm for it; use a feed-specific staleness window.
+  const STALE_HOURS: Record<string, number> = { sigma: 24 * 10 }; // weekly feed → alert only after ~10 days
+  const DEFAULT_STALE = 48;
+  const label = (h: number) => (h % 24 === 0 ? `${h / 24}日` : `${h}時間`);
   for (const f of await q<{ name: string; last_success: Date | null; last_error: string | null }>('SELECT name, last_success, last_error FROM feed_status')) {
-    if (f.last_success && Date.now() - f.last_success.getTime() > 48 * 3600_000) {
+    const h = STALE_HOURS[f.name] ?? DEFAULT_STALE;
+    if (f.last_success && Date.now() - f.last_success.getTime() > h * 3600_000) {
       const day = new Date().toISOString().slice(0, 10);
-      if (await raiseAlert({ kind: 'feed', severity: 'high', title: `脆弱性フィード「${f.name}」が48時間以上更新されていません`, detail: f.last_error ?? '', dedupeKey: `feed:${f.name}:${day}` })) {
-        await recordEvent({ kind: 'health', important: true, title: `脆弱性フィード「${f.name}」が48時間以上更新されていません` });
+      const title = `脆弱性フィード「${f.name}」が${label(h)}以上更新されていません`;
+      if (await raiseAlert({ kind: 'feed', severity: 'high', title, detail: f.last_error ?? '', dedupeKey: `feed:${f.name}:${day}` })) {
+        await recordEvent({ kind: 'health', important: true, title });
       }
     }
   }
