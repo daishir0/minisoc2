@@ -59,8 +59,10 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
   const wideRow = await cnt("source='os-advisory' AND pkg ~ '^(kernel|glibc|openssl|systemd|zlib|sudo|openssh)'", []);
   const total = await q1<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='open' AND $2 = ANY(systems)", [s.host_id, s.root]);
   // open findings of this project + the host address, for the Claude Code remediation prompt picker
-  const picks = await q<{ id: string; vuln_id: string; pkg: string; version: string; fixed: string; severity: string; kev: boolean }>(
-    `SELECT f.id, f.vuln_id, f.pkg, ${sysVersion} AS version, f.fixed, f.severity, f.kev FROM findings f WHERE f.host_id=$1 AND f.status='open' AND $2 = ANY(f.systems)
+  const picks = await q<{ id: string; vuln_id: string; pkg: string; version: string; fixed: string; severity: string; kev: boolean; os_status: string | null; os_fixed: string | null }>(
+    `SELECT f.id, f.vuln_id, f.pkg, ${sysVersion} AS version, f.fixed, f.severity, f.kev, st.status AS os_status, st.fixed AS os_fixed
+     FROM findings f LEFT JOIN host_os_status st ON st.host_id=f.host_id AND st.vuln_id=f.vuln_id AND st.pkg=f.pkg
+     WHERE f.host_id=$1 AND f.status='open' AND $2 = ANY(f.systems)
      ORDER BY f.kev DESC, CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 300`,
     [s.host_id, s.root]);
   // Per-system "not affected" (VEX) judgments for this system (from finding_vex). The open items to
@@ -133,7 +135,7 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
             解消したいCVEにチェックを入れると、<b>対象ホスト上で <code>claude</code>（Claude Code）に貼り付けて実行できる</b>、バックアップ前提の安全なアップグレード提案プロンプトを生成します。内容を確認のうえ対象ホストで実行してください（minisoc2 がサーバーから実行することはありません）。
           </p>
           <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={s.root === '__os__' ? (hinfo?.os_id ?? '') : undefined}
-            findings={picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev }))} />
+            findings={picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev, osStatus: (f.os_status as 'pending' | 'released' | null) ?? undefined, osFixed: f.os_fixed ?? undefined }))} />
         </Card>
       )}
 

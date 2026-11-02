@@ -22,6 +22,11 @@ export interface PickFinding {
   fixed: string;
   severity: string;
   kev: boolean;
+  // OS findings only: vendor-tracker classification of a still-open item.
+  //   'released' = fixed version shipped → upgrading resolves it (上げれば直る)
+  //   'pending'  = vendor fix未リリース → nothing to apply yet (配布元待ち)
+  osStatus?: 'pending' | 'released';
+  osFixed?: string; // vendor fixed version (upgrade target) when released
 }
 
 // Lets the user tick specific CVEs on a project and generates a copy-paste Claude Code prompt that
@@ -138,6 +143,20 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
     `- 対象パッケージ：${osPkgNames.slice(0, 12).join('、')}${osPkgNames.length > 12 ? ` 他${osPkgNames.length - 12}件` : ''}`,
     `- 対象CVE（${cves.length}件）：${cveSummary}`,
   ].join('\n');
+  // Python environments are where "pip show version ≠ on-disk reality ≠ imported version" bites hardest
+  // (user-site ~/.local shadows the env; a vulnerable copy can sit unused in the env while a newer one in
+  // ~/.local is what imports). Detect by path and add an explicit "verify the real artifact" section.
+  const isPy = /(?:miniforge3|anaconda3|miniconda3|\/envs\/|site-packages|\/venv|\.local)/i.test(path);
+  const pyTrap = [
+    ``,
+    `# Python 実行環境の罠（この対象は Python 環境です・必読）`,
+    `同じパッケージが複数の場所に同居し、「\`pip show\` の版」「ディスク上の実体」「実際に import される版」が食い違うことがあります（今回の典型的な誤対応の原因）。必ず**実体**で確認してください：`,
+    `- \`<このenvのpython> -m pip show <pkg>\` の **Location 行**を見る（env本体か \`~/.local/lib/...\` か）。\`~/.local\` は**このホストの全Python環境に効く共有領域**で、env を上書きします。`,
+    `- env本体の実体：\`ls -d <このenv>/lib/python*/site-packages/<pkg>-*.dist-info\``,
+    `- 実行時にどれが勝つか：\`<このenvのpython> -c "import <mod>; print(<mod>.__version__, <mod>.__file__)"\`（sys.path は先頭が勝つ）`,
+    `- minisoc2 は**ディスク上の実体**を棚卸しします。\`~/.local\` に新しい版があっても、env本体に古い脆弱な実体が残っていれば「脆弱」と正しく出ます。**両方**を修正版以上に揃えるか、不要な旧実体を削除してください。`,
+    `- **別env・別プロジェクトの同名パッケージと混同しない**こと。版は必ず Location／\`__file__\` 付きで報告してください。`,
+  ];
   const appPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
     `${host} のホスト（ホスト名：${host}、接続先：${address || '不明'}）の、${path} にあるシステム「${system}」について、脆弱性 ${cves.join('、')} の対応可否を判断し、必要なら安全に解消してください。`,
     ``,
@@ -147,9 +166,10 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
     `# まず判定（重要）`,
     `${path} 配下のコード・依存・設定・実行環境を精査し、各CVEが**このシステムで実際に到達・悪用可能か**を評価してください（例：ランタイムが無い／該当コードが配置・実行されない／ビルド専用の devDependency で本番に関与しない、等）。その上で**結論を最初に明示**してください：`,
     `  (a) 修正する（到達可能、または予防的に妥当）`,
-    `  (b) 影響なし＝対処不要（理由を明記。この場合は**ファイルを変更せず**、理由と、minisoc2 に登録できる VEX 区分 code_not_present / code_not_reachable / requires_environment / requires_configuration などを併記）`,
+    `  (b) 影響なし＝対処不要（理由を明記。この場合は**ファイルを変更せず**、理由と、minisoc2 に登録できる VEX 区分 code_not_present / code_not_reachable / requires_environment / requires_configuration などを併記）。★この判断は **minisoc2 の該当システム画面の「影響なし」ボタンから登録**してください。プロンプトでの報告やパッケージのアンインストールだけでは、画面の脆弱性は消えません（minisoc2 はあなたの頭の中の判断ではなく、登録された VEX と実体の版だけを見ます）。`,
     `  (c) 要確認（判断材料が足りない点を具体的に）`,
     `**対処が無意味なとき（(b)）は、無理にアップグレードせず、その旨をはっきり報告**してください（lockfileだけの書き換え等、実害ゼロの"作業のための作業"はしない）。`,
+    ...(isPy ? pyTrap : []),
     ``,
     `# (a) 修正する場合のお願い`,
     `1. バージョンは上記「→」の版**以上**にする。ダウングレード（別メジャー系列の修正版へ落とす）はしない。可能なら同一メジャー系列の最新安定版まで上げる。`,
@@ -211,8 +231,21 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
           初期選択は KEV・緊急のみです。これ以外に{extraNote}の脆弱性も検出しています（下の一覧でチェックすれば同じプロンプトに含められます）。
         </p>
       )}
+      {(() => {
+        const pend = findings.filter((f) => f.osStatus === 'pending').length;
+        const rel = findings.filter((f) => f.osStatus === 'released').length;
+        if (!pend && !rel) return null;
+        return (
+          <p className="text-xs text-muted">
+            OSの脆弱性のうち
+            {rel > 0 && <> <span className="rounded px-1 bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200">上げれば直る {rel}件</span></>}
+            {pend > 0 && <> <span className="rounded px-1 bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300">配布元待ち {pend}件</span>（修正版が未リリースのため現時点では対処不能）</>}
+            。
+          </p>
+        );
+      })()}
       <div className="max-h-64 overflow-y-auto rounded border border-line">
-        <table className="tbl"><thead><tr><th className="w-8"></th><th>深刻度</th><th>CVE</th><th>パッケージ</th><th>現状→修正</th></tr></thead><tbody>
+        <table className="tbl"><thead><tr><th className="w-8"></th><th>深刻度</th><th>CVE</th><th>パッケージ</th><th>現状→修正</th><th>対処可否</th></tr></thead><tbody>
           {sorted.map((f) => {
             const t = tier(f);
             return (
@@ -222,6 +255,11 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
                 <td className="whitespace-nowrap font-mono text-xs">{f.cve}</td>
                 <td className="break-all font-mono text-xs">{f.pkg}</td>
                 <td className="whitespace-nowrap font-mono text-xs text-muted">{f.version.slice(0, 20)}{(() => { const t = bestFixTarget(f.version, (f.fixed || '').split(/,\s*/)); return t ? ` → ${t.slice(0, 20)}` : ''; })()}</td>
+                <td className="whitespace-nowrap">{f.osStatus === 'pending'
+                  ? <span className="rounded px-1.5 py-0.5 text-[10px] bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300" title="配布元が修正版を未リリース。現時点では適用できません（Livepatch等の緩和のみ）">配布元待ち</span>
+                  : f.osStatus === 'released'
+                  ? <span className="rounded px-1.5 py-0.5 text-[10px] bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200" title={`修正版あり：${f.osFixed || '（更新で解消）'}。アップグレードで解消します`}>上げれば直る{f.osFixed ? ` → ${f.osFixed.slice(0, 18)}` : ''}</span>
+                  : null}</td>
               </tr>
             );
           })}

@@ -66,13 +66,13 @@ function statusKind(status: string): 'vuln' | 'fixedWhenOlder' | 'skip' {
   return 'skip';                                            // not-affected, DNE, ignored, not-vulnerable
 }
 
-export interface DistroVerdict { red: string[]; green: string[]; matched: boolean; vulns: { pkg: string; installed: string; fixed: string }[] }
+export interface DistroVerdict { red: string[]; green: string[]; matched: boolean; vulns: { pkg: string; installed: string; fixed: string; pending: boolean }[] }
 
 // Match a host's dpkg packages against the Ubuntu advisory for one release.
 export function ubuntuVerdict(release: string, osPkgs: { name: string; version: string }[], uc: UbuntuCve): DistroVerdict {
   const red: string[] = [];
   const green: string[] = [];
-  const vulns: { pkg: string; installed: string; fixed: string }[] = [];
+  const vulns: { pkg: string; installed: string; fixed: string; pending: boolean }[] = [];
   let matched = false;
   const forRelease = uc.pkgs.filter((p) => p.release === release);
   if (!forRelease.length) return { red, green, matched, vulns };
@@ -91,10 +91,11 @@ export function ubuntuVerdict(release: string, osPkgs: { name: string; version: 
       matched = true;
       if (kind === 'vuln') {
         red.push(`Ubuntu勧告：${cand}（${release}）は${tp.status === 'pending' ? '修正保留中（未リリース）' : '未修正'}＝脆弱。インストール中 ${ip.name} ${ip.version}`);
-        vulns.push({ pkg: ip.name, installed: ip.version, fixed: tp.fixed || '' });
+        // kind==='vuln' = pending/needed/deferred: no released fix the host can apply right now.
+        vulns.push({ pkg: ip.name, installed: ip.version, fixed: tp.fixed || '', pending: true });
       } else if (tp.fixed) {
         const cmp = compareVersions(ip.version, tp.fixed);
-        if (cmp < 0) { red.push(`Ubuntu勧告：${ip.name} ${ip.version} は修正版 ${tp.fixed} 未満＝脆弱（${cand}/${release}）`); vulns.push({ pkg: ip.name, installed: ip.version, fixed: tp.fixed }); }
+        if (cmp < 0) { red.push(`Ubuntu勧告：${ip.name} ${ip.version} は修正版 ${tp.fixed} 未満＝脆弱（${cand}/${release}）`); vulns.push({ pkg: ip.name, installed: ip.version, fixed: tp.fixed, pending: false }); }
         else green.push(`Ubuntu勧告：${ip.name} ${ip.version} は修正版 ${tp.fixed} 以上＝適用済み（${cand}/${release}）`);
       }
       break; // first matching candidate wins (most specific)

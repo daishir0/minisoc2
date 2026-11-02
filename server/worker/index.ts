@@ -124,8 +124,9 @@ async function syncUbuntuOs() {
     if (!codename) continue;
     // Judge EACH finding's own package (single-package verdict) so a different kernel line's leftover
     // package can't make a flavor-fixed CVE look vulnerable.
-    const findings = await q<{ vuln_id: string; pkg: string; version: string }>("SELECT vuln_id, pkg, version FROM findings WHERE host_id=$1 AND status='open' AND ecosystem LIKE 'Ubuntu:%' AND '__os__' = ANY(systems)", [h.id]);
+    const findings = await q<{ vuln_id: string; pkg: string; version: string }>("SELECT vuln_id, pkg, version FROM findings WHERE host_id=$1 AND status='open' AND (ecosystem LIKE 'Ubuntu:%' OR ecosystem='os') AND '__os__' = ANY(systems)", [h.id]);
     const fixed: { vuln_id: string; pkg: string }[] = [];
+    const status: { vuln_id: string; pkg: string; status: string; fixed: string }[] = [];
     for (const f of findings) {
       const cve = f.vuln_id.replace(/^(UBUNTU|DEBIAN)-/, '');
       if (!/^CVE-\d{4}-\d+$/.test(cve)) continue;
@@ -134,7 +135,13 @@ async function syncUbuntuOs() {
       if (!uc) continue;
       const ver = f.version.split(',')[0].trim();
       const v = ubuntuVerdict(codename, [{ name: f.pkg, version: ver }], uc);
-      if (v.matched && !v.red.length && v.green.length) fixed.push({ vuln_id: f.vuln_id, pkg: f.pkg }); // vendor says this pkg is fixed at <= installed
+      if (!v.matched) continue;
+      if (!v.red.length && v.green.length) { fixed.push({ vuln_id: f.vuln_id, pkg: f.pkg }); continue; } // vendor says this pkg is fixed at <= installed
+      if (v.red.length) {
+        // still open: pending = fix未リリース (待つしかない); released = 修正版あり (上げれば直る)
+        const vv = v.vulns[0];
+        status.push({ vuln_id: f.vuln_id, pkg: f.pkg, status: vv?.pending ? 'pending' : 'released', fixed: vv?.fixed || '' });
+      }
     }
     const cur = (await q<{ vuln_id: string; pkg: string }>('SELECT vuln_id, pkg FROM host_os_fixed WHERE host_id=$1', [h.id])).map((r) => `${r.vuln_id}\u0000${r.pkg}`);
     const want = fixed.map((x) => `${x.vuln_id}\u0000${x.pkg}`);
@@ -145,6 +152,43 @@ async function syncUbuntuOs() {
       await q('UPDATE hosts SET needs_match=true WHERE id=$1', [h.id]);
       log(`ubuntu-os ${h.id.slice(0, 8)}: ${fixed.length} OS findings already-fixed per vendor (suppressing OSV false positives)`);
     }
+    // Reconcile the pending/released colour-coding (display-only, no rematch needed).
+    const curS = (await q<{ vuln_id: string; pkg: string; status: string; fixed: string }>('SELECT vuln_id, pkg, status, fixed FROM host_os_status WHERE host_id=$1', [h.id])).map((r) => `${r.vuln_id}\u0000${r.pkg}\u0000${r.status}\u0000${r.fixed}`);
+    const wantS = status.map((x) => `${x.vuln_id}\u0000${x.pkg}\u0000${x.status}\u0000${x.fixed}`);
+    const sameS = curS.length === wantS.length && wantS.every((x) => curS.includes(x));
+    if (!sameS) {
+      await q('DELETE FROM host_os_status WHERE host_id=$1', [h.id]);
+      for (const x of status) await q('INSERT INTO host_os_status(host_id, vuln_id, pkg, status, fixed) VALUES ($1,$2,$3,$4,$5) ON CONFLICT (host_id, vuln_id, pkg) DO UPDATE SET status=EXCLUDED.status, fixed=EXCLUDED.fixed, updated_at=now()', [h.id, x.vuln_id, x.pkg, x.status, x.fixed]);
+      const pend = status.filter((x) => x.status === 'pending').length;
+      log(`ubuntu-os ${h.id.slice(0, 8)}: ${status.length} open OS findings classified (${pend} pending / ${status.length - pend} released)`);
+    }
+  }
+}
+
+// RPM hosts (Amazon Linux / RHEL / Fedora): dnf updateinfo is the fix-version authority and only lists
+// RELEASED advisories, so any open OS finding that maps to a host_os_advisories row has a shipped fix
+// the host can apply right now → 'released' (上げれば直る). Findings without an advisory are left
+// unclassified (no badge): dnf simply has no update for them, which is not the same as "pending".
+// Pure SQL, no network — cheap enough to run every tick.
+async function syncRpmOsStatus() {
+  const hosts = await q<{ id: string }>("SELECT id FROM hosts WHERE os_id IN ('amzn','rhel','fedora','centos','rocky','almalinux') AND NOT disabled AND baseline_done");
+  for (const h of hosts) {
+    const want = await q<{ vuln_id: string; pkg: string; fixed: string }>(
+      `SELECT DISTINCT f.vuln_id, f.pkg, COALESCE(a.fixed,'') AS fixed
+       FROM findings f JOIN host_os_advisories a ON a.host_id=f.host_id AND a.vuln_id=f.vuln_id AND a.pkg=f.pkg
+       WHERE f.host_id=$1 AND f.status='open' AND f.ecosystem='rpm' AND '__os__'=ANY(f.systems)`, [h.id]);
+    const cur = (await q<{ vuln_id: string; pkg: string; status: string; fixed: string }>('SELECT vuln_id, pkg, status, fixed FROM host_os_status WHERE host_id=$1', [h.id])).map((r) => `${r.vuln_id}\u0000${r.pkg}\u0000${r.status}\u0000${r.fixed}`);
+    const wantK = want.map((x) => `${x.vuln_id}\u0000${x.pkg}\u0000released\u0000${x.fixed}`);
+    const same = cur.length === wantK.length && wantK.every((x) => cur.includes(x));
+    if (same) continue;
+    await q('DELETE FROM host_os_status WHERE host_id=$1', [h.id]);
+    if (want.length) await q(
+      `INSERT INTO host_os_status(host_id, vuln_id, pkg, status, fixed)
+       SELECT $1, u.vuln_id, u.pkg, 'released', u.fixed
+       FROM unnest($2::text[], $3::text[], $4::text[]) AS u(vuln_id, pkg, fixed)
+       ON CONFLICT (host_id, vuln_id, pkg) DO UPDATE SET status='released', fixed=EXCLUDED.fixed, updated_at=now()`,
+      [h.id, want.map((x) => x.vuln_id), want.map((x) => x.pkg), want.map((x) => x.fixed)]);
+    log(`rpm-os ${h.id.slice(0, 8)}: ${want.length} open OS findings classified released (dnf advisory available)`);
   }
 }
 
@@ -276,8 +320,10 @@ async function tick(n: number) {
     ['staleHosts', staleHosts, 5],
     ['feeds', feeds, 10],
     ['sigmaSync', sigmaSync, 60],
-    ['syncUbuntuOs', syncUbuntuOs, 60],
-    ['watchCveAlerts', watchCveAlerts, 30],
+    ['syncRpmOsStatus', syncRpmOsStatus, 10],
+    // syncUbuntuOs / watchCveAlerts do hundreds of per-CVE ubuntu.com lookups (each up to 10s). They run
+    // in their own detached loop (see main) so a slow upstream can never stall matchPending — the job
+    // that turns a fresh collection into updated findings — and delay remediation showing as resolved.
     ['pollPullHosts', pollPullHosts, 5],
     ['dailyRematch', dailyRematch, 10],
     ['notify', async () => {
@@ -323,6 +369,15 @@ async function main() {
         log(`nvd: ${pages} pages synced`);
       }
       for (let i = 0; i < (more ? NVD_DELAY_MS : 600_000) / 1000 && !stopping; i++) await new Promise((r) => setTimeout(r, 1000));
+    }
+  })();
+  // Vendor-tracker lookups (Ubuntu) are hundreds of per-CVE HTTP calls; keep them off the tick loop so
+  // they can never block matchPending. ~30 min cadence; failures are logged and retried next pass.
+  void (async () => {
+    while (!stopping) {
+      try { await syncUbuntuOs(); } catch (e) { log(`syncUbuntuOs failed: ${errMsg(e)}`); }
+      try { await watchCveAlerts(); } catch (e) { log(`watchCveAlerts failed: ${errMsg(e)}`); }
+      for (let i = 0; i < 1800 && !stopping; i++) await new Promise((r) => setTimeout(r, 1000));
     }
   })();
   while (!stopping) {
