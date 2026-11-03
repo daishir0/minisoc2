@@ -4,7 +4,19 @@ import { ExploreTabs } from '@/components/ExploreTabs';
 import { Card, Kev, SEV_LABEL, Sev, ago, vulnLink } from '@/components/ui';
 import { q } from '@/lib/db';
 import { VEX_JUSTIFICATIONS, VEX_LABEL } from '@/lib/vex';
+import { riskBucket, BUCKET_LABEL, type Bucket } from '@/lib/risk';
 import { suppressFinding } from '../actions';
+
+const BKT_CLS: Record<Bucket, string> = {
+  act: 'bg-red-600 text-white',
+  attend: 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200',
+  track: 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300',
+};
+function Bkt({ f }: { f: { kev: boolean; epss: number | null; pub: boolean; severity: string } }) {
+  const b = riskBucket({ kev: f.kev, epss: f.epss, exposure: f.pub ? 'public' : '', severity: f.severity });
+  return <span className={`rounded px-1.5 py-0.5 text-[10px] ${BKT_CLS[b]}`} title="優先度（KEV→公開露出→EPSS→深刻度）">{BUCKET_LABEL[b]}</span>;
+}
+const epssPct = (e: number | null) => (e != null ? `EPSS ${Math.round(e * 100)}%` : '');
 
 const PAGE = 100;
 const STATUS_LABEL: Record<string, string> = { open: '未対応', suppressed: '影響なし（VEX）', resolved: '解消済み' };
@@ -27,10 +39,14 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
   const rows = await q<{
     id: string; host_id: string; host: string; vuln_id: string; ecosystem: string; pkg: string; version: string; fixed: string;
     severity: string; kev: boolean; source: string; first_seen: Date; summary: string | null; suppress_reason: string | null; suppress_note: string | null; cvss: string | null;
+    epss: number | null; pub: boolean;
   }>(
-    `SELECT f.*, h.name AS host, (SELECT v.summary FROM vulns v WHERE v.id=f.vuln_id OR f.vuln_id = ANY(v.aliases) LIMIT 1) AS summary
+    `SELECT f.*, h.name AS host, (SELECT v.summary FROM vulns v WHERE v.id=f.vuln_id OR f.vuln_id = ANY(v.aliases) LIMIT 1) AS summary,
+       (SELECT max(e.score) FROM epss e WHERE e.cve=f.vuln_id OR e.cve = ANY(SELECT unnest(v.aliases) FROM vulns v WHERE v.id=f.vuln_id)) AS epss,
+       EXISTS(SELECT 1 FROM systems s WHERE s.host_id=f.host_id AND s.root = ANY(f.systems) AND s.exposure='public') AS pub
      FROM findings f JOIN hosts h ON h.id=f.host_id WHERE ${where.join(' AND ')}
-     ORDER BY f.kev DESC, CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, f.cvss DESC NULLS LAST, f.first_seen DESC
+     ORDER BY f.kev DESC, pub DESC, COALESCE((SELECT max(e.score) FROM epss e WHERE e.cve=f.vuln_id OR e.cve = ANY(SELECT unnest(v.aliases) FROM vulns v WHERE v.id=f.vuln_id)),0) DESC,
+       CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, f.cvss DESC NULLS LAST, f.first_seen DESC
      LIMIT ${PAGE} OFFSET ${page * PAGE}`,
     params,
   );
@@ -68,7 +84,7 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
       <ul className="divide-y divide-line md:hidden">
         {rows.map((f) => (
           <li key={f.id} className="py-3 text-sm">
-            <div className="flex flex-wrap items-center gap-2"><Sev s={f.severity} />{f.kev && <Kev />}{vulnLink(f.vuln_id)}{f.cvss && <span className="text-xs text-muted">CVSS {f.cvss}</span>}</div>
+            <div className="flex flex-wrap items-center gap-2"><Bkt f={f} /><Sev s={f.severity} />{f.kev && <Kev />}{vulnLink(f.vuln_id)}{f.cvss && <span className="text-xs text-muted">CVSS {f.cvss}</span>}{f.epss != null && <span className="text-xs text-muted">{epssPct(f.epss)}</span>}{f.pub && <span className="rounded bg-red-100 px-1 text-[10px] text-red-700 dark:bg-red-950 dark:text-red-200">公開</span>}</div>
             {f.summary && <div className="mt-1 text-xs text-muted">{f.summary}</div>}
             <div className="mt-1 break-all font-mono text-xs">{f.pkg} <span className="text-muted">{f.version.slice(0, 80)}</span></div>
             {f.fixed && <div className="break-all text-xs text-muted">修正版：{f.fixed.slice(0, 80)}</div>}
@@ -96,11 +112,12 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
       </ul>
       <div className="hidden overflow-x-auto md:block">
         <table className="tbl">
-          <thead><tr><th>深刻度</th><th>脆弱性</th><th>パッケージ</th><th>修正版</th><th>ホスト</th><th>検出</th><th></th></tr></thead>
+          <thead><tr><th>優先</th><th>深刻度</th><th>脆弱性</th><th>パッケージ</th><th>修正版</th><th>ホスト</th><th>検出</th><th></th></tr></thead>
           <tbody>
             {rows.map((f) => (
               <tr key={f.id}>
-                <td className="whitespace-nowrap"><Sev s={f.severity} /> {f.kev && <Kev />}{f.cvss && <div className="text-xs text-muted">CVSS {f.cvss}</div>}</td>
+                <td className="whitespace-nowrap"><Bkt f={f} />{f.pub && <div className="mt-0.5"><span className="rounded bg-red-100 px-1 text-[10px] text-red-700 dark:bg-red-950 dark:text-red-200">公開</span></div>}</td>
+                <td className="whitespace-nowrap"><Sev s={f.severity} /> {f.kev && <Kev />}{f.cvss && <div className="text-xs text-muted">CVSS {f.cvss}</div>}{f.epss != null && <div className="text-xs text-muted">{epssPct(f.epss)}</div>}</td>
                 <td>{vulnLink(f.vuln_id)}{f.summary && <div className="max-w-md text-xs text-muted">{f.summary}</div>}</td>
                 <td><div className="font-mono text-xs">{f.pkg}</div><div className="max-w-xs truncate text-xs text-muted" title={f.version}>{f.ecosystem} {f.version}</div></td>
                 <td className="max-w-[12rem] truncate font-mono text-xs" title={f.fixed}>{f.fixed || '-'}</td>

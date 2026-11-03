@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import type { ReactNode } from 'react';
 import { notFound } from 'next/navigation';
 import { Card, Sev, ago } from '@/components/ui';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
@@ -10,9 +11,42 @@ import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { taskKey } from '@/lib/tasks';
 import { AgentConfigCard, type AgentConfig } from '@/components/AgentConfigCard';
 import { ConfirmCollect } from '@/components/ConfirmCollect';
+import { TrendChart, SparkLine } from '@/components/Timeline';
 import { agentDistDir } from '@/lib/agentdist';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+
+// One remediation unit (kernel / non-kernel OS / a project env). This is the core repeated card of the
+// host screen: status at a glance + one click into its remediation prompt. Kept generic (no host-specifics).
+function UnitCard({ icon, title, sub, kev, crit, high, total, href, badge, spark }: {
+  icon: string; title: string; sub?: string; kev: number; crit: number; high: number; total: number; href: string; badge?: ReactNode; spark?: number[];
+}) {
+  const tone = kev > 0 || crit > 0 ? 'border-l-red-500' : high > 0 ? 'border-l-orange-400' : total > 0 ? 'border-l-yellow-400' : 'border-l-green-500';
+  return (
+    <div className={`flex flex-col gap-2 rounded-lg border border-line border-l-4 ${tone} bg-bg p-4`}>
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="text-base">{icon}</span>
+        <h3 className="truncate text-sm font-semibold">{title}</h3>
+        {badge}
+      </div>
+      {sub && <p className="text-xs text-muted">{sub}</p>}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+        {total > 0 ? (
+          <>
+            {kev > 0 && <span className="font-semibold text-red-600">KEV {kev}</span>}
+            {crit > 0 && <span className="font-semibold text-red-600">緊急 {crit}</span>}
+            {high > 0 && <span className="text-orange-600">高 {high}</span>}
+            <span className="text-muted">計 {total}</span>
+          </>
+        ) : <span className="font-medium text-green-600">対処不要（未対応なし）</span>}
+        {spark && spark.length > 1 && <span className="ml-auto" title="このユニットの件数の推移（緑＝改善）"><SparkLine values={spark} /></span>}
+      </div>
+      <div className="mt-auto pt-1">
+        <Link href={href} className={total > 0 ? 'btn text-xs' : 'btn-ghost text-xs'}>{total > 0 ? '対応する →' : '詳細 →'}</Link>
+      </div>
+    </div>
+  );
+}
 
 export default async function HostPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -32,6 +66,21 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       'SELECT ssh_host, ssh_port, ssh_user, auth, every_hours, last_poll_at, last_error, aide_paths, aide_excludes FROM pull_targets WHERE host_id=$1', [id])
     : null;
   const fileBase = Number((await q<{ n: string }>('SELECT count(*) AS n FROM host_file_baseline WHERE host_id=$1', [id]))[0].n);
+  // Per-host vulnerability trend (same stacked chart as the home page, scoped to this host).
+  const htrend = await q<{ day: string; kev: string; critical: string; high: string; medium: string; low: string }>(
+    `SELECT to_char(day, 'YYYY-MM-DD') AS day, sum(kev) AS kev, sum(critical) AS critical, sum(high) AS high, sum(medium) AS medium, sum(low) AS low FROM daily_snapshots ds
+     WHERE host_id=$1 AND day > current_date - 90 AND NOT EXISTS (SELECT 1 FROM systems s WHERE s.host_id=ds.host_id AND s.root=ds.system_root AND s.ignored)
+     GROUP BY day ORDER BY day`, [id]);
+  const [hLive] = await q<{ kev: string; critical: string; high: string; medium: string; low: string }>(
+    `SELECT count(*) FILTER (WHERE kev) AS kev, count(*) FILTER (WHERE NOT kev AND severity='critical') AS critical,
+            count(*) FILTER (WHERE NOT kev AND severity='high') AS high, count(*) FILTER (WHERE severity='medium') AS medium,
+            count(*) FILTER (WHERE severity='low') AS low FROM findings WHERE host_id=$1 AND status='open'`, [id]);
+  const [{ resolved: hResolved }] = await q<{ resolved: string }>("SELECT count(*) AS resolved FROM findings WHERE host_id=$1 AND status='resolved'", [id]);
+  const hToday = new Date().toISOString().slice(0, 10);
+  const hPts = htrend.map((r) => ({ day: r.day, kev: Number(r.kev), critical: Number(r.critical), high: Number(r.high), medium: Number(r.medium), low: Number(r.low) }));
+  if (!hPts.length || hPts[hPts.length - 1].day !== hToday) {
+    hPts.push({ day: hToday, kev: Number(hLive.kev), critical: Number(hLive.critical), high: Number(hLive.high), medium: Number(hLive.medium), low: Number(hLive.low), live: true } as (typeof hPts)[number] & { live: boolean });
+  }
   const fileChanges = await q<{ created_at: Date; important: boolean; title: string }>(
     "SELECT ts AS created_at, important, title FROM change_events WHERE host_id=$1 AND kind='host_state' AND title LIKE '%監視ファイル%' ORDER BY ts DESC LIMIT 8", [id]);
   // Projects on this host: registered (manual) are evaluated; auto-detected are approval candidates.
@@ -55,6 +104,22 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   const fixedN = Number((await q<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='resolved' AND resolved_at IS NOT NULL", [id]))[0].n);
   // OS (host-wide) KEV/critical, with a direct link to the OS remediation task (dnf/apt prompt).
   const osRow = (await q<{ kev: string; crit: string; sid: number | null }>("SELECT count(*) FILTER (WHERE kev) AS kev, count(*) FILTER (WHERE NOT kev AND severity='critical') AS crit, (SELECT id FROM systems s WHERE s.host_id=$1 AND s.root='__os__') AS sid FROM findings WHERE host_id=$1 AND status='open' AND '__os__' = ANY(systems)", [id]))[0];
+  // OS findings split by fix method (kernel = reboot; the rest = package/bulk update) for the unit cards.
+  const osSplit = await q<{ kind: string; kev: string; crit: string; hi: string; total: string }>(
+    `SELECT CASE WHEN pkg ~ '^(linux|kernel)([-.]|$)' THEN 'kernel' ELSE 'other' END AS kind,
+            count(*) FILTER (WHERE kev) AS kev, count(*) FILTER (WHERE NOT kev AND severity='critical') AS crit,
+            count(*) FILTER (WHERE NOT kev AND severity='high') AS hi, count(*) AS total
+     FROM findings WHERE host_id=$1 AND status='open' AND '__os__' = ANY(systems) GROUP BY 1`, [id]);
+  const osK = osSplit.find((r) => r.kind === 'kernel');
+  const osO = osSplit.find((r) => r.kind === 'other');
+  const osHref = osRow.sid ? `/systems/${osRow.sid}` : `/actions/${taskKey(h.id, '__os__')}`;
+  // Per-unit (system_root) daily totals for the unit-card sparklines (last 60 days).
+  const unitSeries = await q<{ root: string; day: string; total: string }>(
+    `SELECT system_root AS root, to_char(day, 'YYYY-MM-DD') AS day, sum(kev+critical+high+medium+low) AS total
+     FROM daily_snapshots WHERE host_id=$1 AND day > current_date - 60 GROUP BY system_root, day ORDER BY day`, [id]);
+  const seriesByRoot = new Map<string, number[]>();
+  for (const r of unitSeries) seriesByRoot.set(r.root, [...(seriesByRoot.get(r.root) ?? []), Number(r.total)]);
+  const osSeries = seriesByRoot.get('__os__');
   // Audit trail: config pushes, updates and collect requests are logged as 'ops' change events (with
   // the admin's email). Surface them so distribution is accountable.
   const ops = await q<{ ts: Date; title: string }>("SELECT ts, title FROM change_events WHERE host_id=$1 AND kind='ops' ORDER BY ts DESC LIMIT 20", [id]);
@@ -75,6 +140,32 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
         <Link className="btn-ghost ml-auto" href={`/hosts/${h.id}/history`}>✅ 対処の記録{fixedN ? `（${fixedN}）` : ''}</Link>
         <Link className="btn-ghost" href={`/findings?host=${h.id}`}>未対応の脆弱性</Link>
       </div>
+      <Card title="このホストの脆弱性の推移（90日・深刻度別の積み上げ）" right={<Link href={`/hosts/${h.id}/history`} className="text-xs text-accent">対処の記録</Link>}>
+        <TrendChart points={hPts} resolvedTotal={Number(hResolved)} />
+      </Card>
+
+      <section className="space-y-3">
+        <h2 className="text-sm font-semibold">対応ユニット（直し方ごと）— プロンプトをコピーして実施 → 収集で確認</h2>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <UnitCard icon="🧩" title="カーネル" sub="要再起動・計画実行" kev={Number(osK?.kev ?? 0)} crit={Number(osK?.crit ?? 0)} high={Number(osK?.hi ?? 0)} total={Number(osK?.total ?? 0)} href={osHref} spark={osSeries} />
+          <UnitCard icon="📦" title="カーネル以外のOS" sub="一括更新・サービス再起動のみ" kev={Number(osO?.kev ?? 0)} crit={Number(osO?.crit ?? 0)} high={Number(osO?.hi ?? 0)} total={Number(osO?.total ?? 0)} href={osHref} spark={osSeries} />
+          {registered.map((p) => (
+            <UnitCard key={p.id} icon="🧪" title={p.name} sub={p.stack || 'プロジェクト環境'}
+              kev={Number(p.k)} crit={Number(p.c)} high={Number(p.hi)} total={Number(p.total)} href={`/systems/${p.id}`} spark={seriesByRoot.get(p.root)}
+              badge={p.exposure === 'public' ? <span className="rounded bg-red-100 px-1.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span> : p.ignored ? <span className="rounded bg-slate-500 px-1.5 text-[11px] text-white">除外中</span> : undefined} />
+          ))}
+        </div>
+        {registered.length === 0 && candidates.length > 0 && (
+          <p className="text-xs text-muted">⚠ 未登録の候補が {candidates.length} 件あります。下の「⚙️ 設定・管理・詳細」→「プロジェクトの登録」で登録すると、ここにユニットとして並びます。</p>
+        )}
+        {registered.length === 0 && candidates.length === 0 && Number(osRow.kev) + Number(osRow.crit) + Number(osO?.total ?? 0) + Number(osK?.total ?? 0) === 0 && (
+          <p className="text-xs text-muted">未対応の脆弱性はありません。</p>
+        )}
+      </section>
+
+      <details className="rounded-lg border border-line">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">⚙️ 設定・管理・詳細（ホスト情報／プロジェクト登録／エージェント／監査ログ／改ざん検知／ポート など）</summary>
+        <div className="space-y-6 border-t border-line p-4">
       <div className="grid gap-6 lg:grid-cols-3">
         <Card title="ホスト情報">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
@@ -132,17 +223,6 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           </form>
         </Card>
       </div>
-      {(Number(osRow.kev) + Number(osRow.crit) > 0) && (
-        <Card title="OS（ホスト全体）の脆弱性">
-          <div className="flex flex-wrap items-center gap-3 text-sm">
-            <span>OSパッケージ（kernel・glibc・openssl 等）の未対応：</span>
-            {Number(osRow.kev) > 0 && <b className="text-red-600">KEV {osRow.kev}</b>}
-            {Number(osRow.crit) > 0 && <b className="text-red-600">緊急 {osRow.crit}</b>}
-            <Link href={osRow.sid ? `/systems/${osRow.sid}` : `/actions/${taskKey(h.id, '__os__')}`} className="btn ml-auto">OSの対応プロンプトへ →</Link>
-          </div>
-          <p className="mt-2 text-xs text-muted">{h.os_name?.toLowerCase().includes('ubuntu') || h.os_name?.toLowerCase().includes('debian') ? 'apt-get' : 'dnf'} での更新コマンドと、Claude Code 用プロンプトがそのページにあります。プロジェクトではなくホスト全体のOSが対象です。</p>
-        </Card>
-      )}
       <Card title={`プロジェクト（登録済み ${registered.length}／未登録の候補 ${candidates.length}）`}
         right={pull ? (
           <form action={pollPullNow}><input type="hidden" name="id" value={h.id} />
@@ -299,6 +379,8 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           </tbody></table>
         </Card>
       </div>
+        </div>
+      </details>
     </>
   );
 }

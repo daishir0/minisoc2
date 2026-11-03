@@ -40,27 +40,80 @@ export function Timeline({ groups, days, perDay = 3 }: { groups: DayGroup[]; day
 }
 
 // Two lines (KEV, critical) over the last N days, drawn as inline SVG.
-export function TrendChart({ points }: { points: { day: string; kev: number; critical: number }[] }) {
-  if (points.length < 2) return <p className="text-sm text-muted">推移は2日分以上のデータがたまると表示されます。</p>;
-  const W = 600, H = 140, P = 24;
-  const max = Math.max(1, ...points.map((p) => Math.max(p.kev, p.critical)));
-  const x = (i: number) => P + (i * (W - 2 * P)) / (points.length - 1);
+export interface TrendPoint { day: string; kev: number; critical: number; high: number; medium: number; low: number; live?: boolean }
+
+// Stacked-area trend of open findings by severity, so the scale of the backlog and how far it has been
+// cut down over time are visible at a glance. The last point may be a live "today" value (point.live).
+export function TrendChart({ points, resolvedTotal }: { points: TrendPoint[]; resolvedTotal?: number }) {
+  if (points.length < 2) return <p className="text-sm text-muted">推移は2日分以上のデータがたまると表示されます（毎日スナップショットを記録しています）。</p>;
+  const SEV = [
+    { k: 'low', c: '#94a3b8', label: '低' },
+    { k: 'medium', c: '#eab308', label: '中' },
+    { k: 'high', c: '#f97316', label: '高' },
+    { k: 'critical', c: '#dc2626', label: '緊急' },
+    { k: 'kev', c: '#7f1d1d', label: 'KEV' },
+  ] as const;
+  const total = (p: TrendPoint) => p.low + p.medium + p.high + p.critical + p.kev;
+  const cum = (p: TrendPoint, L: number) => { let s = 0; for (let i = 0; i <= L; i++) s += p[SEV[i].k]; return s; };
+  const W = 640, H = 160, P = 26;
+  const max = Math.max(1, ...points.map(total));
+  const n = points.length;
+  const x = (i: number) => P + (i * (W - 2 * P)) / (n - 1);
   const y = (v: number) => H - P - (v / max) * (H - 2 * P);
-  const path = (k: 'kev' | 'critical') => points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p[k]).toFixed(1)}`).join(' ');
-  const last = points[points.length - 1];
+  const band = (L: number) => {
+    const up = points.map((p, i) => `${x(i).toFixed(1)},${y(cum(p, L)).toFixed(1)}`);
+    const down = points.map((p, i) => `${x(i).toFixed(1)},${y(L === 0 ? 0 : cum(p, L - 1)).toFixed(1)}`).reverse();
+    return `M${up.join(' L')} L${down.join(' L')} Z`;
+  };
+  const last = points[n - 1];
+  const at = (daysBack: number) => points[Math.max(0, n - 1 - daysBack)];
+  const d = (back: number) => total(last) - total(at(back));
+  const fmtD = (v: number) => (v > 0 ? `+${v}` : `${v}`);
+  const peak = Math.max(...points.map(total));
+  const liveX = last.live ? x(n - 1) : null;
   return (
-    <div>
-      <svg viewBox={`0 0 ${W} ${H}`} className="h-36 w-full" role="img" aria-label="KEVと緊急の推移">
+    <div className="space-y-2">
+      <svg viewBox={`0 0 ${W} ${H}`} className="w-full" style={{ height: 160 }} role="img" aria-label="脆弱性件数の推移（深刻度別の積み上げ）">
         <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="var(--line)" />
-        <path d={path('critical')} fill="none" stroke="#f97316" strokeWidth="2.5" />
-        <path d={path('kev')} fill="none" stroke="#dc2626" strokeWidth="2.5" />
-        <text x={P} y={H - 6} fontSize="11" fill="var(--muted)">{points[0].day.slice(5)}</text>
-        <text x={W - P} y={H - 6} fontSize="11" fill="var(--muted)" textAnchor="end">{last.day.slice(5)}</text>
+        {SEV.map((s, L) => <path key={s.k} d={band(L)} fill={s.c} fillOpacity={0.85} stroke="none" />)}
+        {liveX !== null && <line x1={liveX} y1={P - 6} x2={liveX} y2={H - P} stroke="var(--muted)" strokeDasharray="3 3" />}
+        <text x={P} y={H - 8} fontSize="11" fill="var(--muted)">{points[0].day.slice(5)}</text>
+        <text x={W - P} y={H - 8} fontSize="11" fill="var(--muted)" textAnchor="end">{last.live ? '現在' : last.day.slice(5)}</text>
+        <text x={P} y={P - 10} fontSize="11" fill="var(--muted)">最大 {peak.toLocaleString()} 件</text>
       </svg>
-      <div className="flex gap-4 text-xs text-muted">
-        <span><span className="mr-1 inline-block h-2 w-3 rounded" style={{ background: '#dc2626' }} />KEV {last.kev}</span>
-        <span><span className="mr-1 inline-block h-2 w-3 rounded" style={{ background: '#f97316' }} />緊急 {last.critical}</span>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+        {[...SEV].reverse().map((s) => (
+          <span key={s.k} className="text-muted"><span className="mr-1 inline-block h-2 w-3 rounded align-middle" style={{ background: s.c }} />{s.label} {last[s.k].toLocaleString()}</span>
+        ))}
+      </div>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted">
+        <span><b className="text-fg">現在 {total(last).toLocaleString()} 件</b></span>
+        <span>前日比 {fmtD(d(1))}</span>
+        <span>7日 {fmtD(d(7))}</span>
+        <span>30日 {fmtD(d(30))}</span>
+        <span>ピーク {peak.toLocaleString()} 件</span>
+        {resolvedTotal != null && <span>累計解消 {resolvedTotal.toLocaleString()} 件</span>}
       </div>
     </div>
+  );
+}
+
+// Tiny inline sparkline (total open findings over time) for a unit/host card — just enough to show the
+// direction of travel. Generic: takes a number series, no domain assumptions.
+export function SparkLine({ values, className }: { values: number[]; className?: string }) {
+  if (values.length < 2) return null;
+  const W = 120, H = 24, P = 2;
+  const max = Math.max(1, ...values);
+  const x = (i: number) => P + (i * (W - 2 * P)) / (values.length - 1);
+  const y = (v: number) => H - P - (v / max) * (H - 2 * P);
+  const line = values.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const area = `${line} L${x(values.length - 1).toFixed(1)},${H - P} L${x(0).toFixed(1)},${H - P} Z`;
+  const down = values[values.length - 1] <= values[0];
+  const c = down ? '#16a34a' : '#dc2626'; // improving (down) = green, worsening = red
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className={className} style={{ width: W, height: H }} role="img" aria-label="推移" preserveAspectRatio="none">
+      <path d={area} fill={c} fillOpacity={0.12} stroke="none" />
+      <path d={line} fill="none" stroke={c} strokeWidth="1.5" />
+    </svg>
   );
 }

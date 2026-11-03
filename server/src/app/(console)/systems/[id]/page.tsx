@@ -129,15 +129,36 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
         </Card>
       )}
 
-      {picks.length > 0 && (
-        <Card title="Claude Code で解消（CVEを選んでプロンプト生成）">
-          <p className="mb-3 text-sm text-muted">
-            解消したいCVEにチェックを入れると、<b>対象ホスト上で <code>claude</code>（Claude Code）に貼り付けて実行できる</b>、バックアップ前提の安全なアップグレード提案プロンプトを生成します。内容を確認のうえ対象ホストで実行してください（minisoc2 がサーバーから実行することはありません）。
-          </p>
-          <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={s.root === '__os__' ? (hinfo?.os_id ?? '') : undefined}
-            findings={picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev, osStatus: (f.os_status as 'pending' | 'released' | null) ?? undefined, osFixed: f.os_fixed ?? undefined }))} />
-        </Card>
-      )}
+      {picks.length > 0 && (() => {
+        const pf = picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev, osStatus: (f.os_status as 'pending' | 'released' | null) ?? undefined, osFixed: f.os_fixed ?? undefined }));
+        const isOs = s.root === '__os__';
+        const oid = isOs ? (hinfo?.os_id ?? '') : undefined;
+        // Kernel vs the rest differ in runbook (reboot vs service restart), risk and timing, so the OS
+        // picker is split into two cards with their own prompts. Same regex as RemediationPicker.
+        const isKernel = (n: string) => /^(linux|kernel)([-.]|$)/.test(n);
+        return (
+          <Card title="Claude Code で解消（CVEを選んでプロンプト生成）">
+            <p className="mb-3 text-sm text-muted">
+              解消したいCVEにチェックを入れると、<b>対象ホスト上で <code>claude</code>（Claude Code）に貼り付けて実行できる</b>、バックアップ前提の安全なアップグレード提案プロンプトを生成します。内容を確認のうえ対象ホストで実行してください（minisoc2 がサーバーから実行することはありません）。
+            </p>
+            {isOs ? (
+              <div className="space-y-6">
+                <p className="text-xs text-muted">推奨順：まず<b>②その他</b>（原則ダウンタイム不要）、<b>①カーネル</b>はスナップショット取得後に計画的な再起動で。ただし KEV・緊急のカーネル脆弱性があれば①を最優先。</p>
+                <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={oid}
+                  title="① カーネル（要再起動・計画実行）"
+                  emptyNote="現在カーネルに未解消の脆弱性はありません（対処不要）。カーネルCVEは新カーネルへの更新＋再起動で累積的に解消されます。ここに項目が戻ってきたら対応してください。"
+                  findings={pf.filter((f) => isKernel(f.pkg))} />
+                <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={oid} bulk
+                  title="② その他のOSパッケージ（随時・サービス再起動のみ）"
+                  emptyNote="現在カーネル以外のOSパッケージに未解消の脆弱性はありません（対処不要）。"
+                  findings={pf.filter((f) => !isKernel(f.pkg))} />
+              </div>
+            ) : (
+              <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={oid} findings={pf} />
+            )}
+          </Card>
+        );
+      })()}
 
       {vexed.length > 0 && (
         <Card title={`影響なしに登録済み（${vexed.length}）`}>
@@ -159,6 +180,9 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
         </Card>
       )}
 
+      <details className="rounded-lg border border-line">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">⚙️ 設定・詳細（登録内容／概要／SBOM／除外パス／改ざん監視）</summary>
+        <div className="space-y-6 border-t border-line p-4">
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
           <Card title="登録内容"><SystemForm v={{ ...s, hostId: s.host_id, detectedStack: detected }} /></Card>
@@ -250,6 +274,8 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
           </ul>
         )}
       </Card>
+        </div>
+      </details>
     </>
   );
 }

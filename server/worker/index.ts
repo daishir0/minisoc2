@@ -5,6 +5,7 @@ import { notifyPending, raiseAlert } from '../src/lib/alerts';
 import { q, q1 } from '../src/lib/db';
 import { migrate } from './migrate';
 import { statfs } from 'node:fs/promises';
+import { gunzipSync } from 'node:zlib';
 import { syncKev } from '../src/lib/feeds';
 import { syncSigma } from '../src/lib/sigma';
 import { pollPull } from '../src/lib/pullssh';
@@ -192,6 +193,39 @@ async function syncRpmOsStatus() {
   }
 }
 
+// EPSS (exploit probability) daily sync, bounded to the CVEs that actually appear in this environment
+// (a few thousand), so we never store the full ~300k-row catalog. Display/sort only — no rematch needed.
+async function syncEpss() {
+  const last = await getSetting<{ at: string }>('epss_synced_at', { at: '' });
+  if (last.at && Date.now() - new Date(last.at).getTime() < 20 * 3600_000) return;
+  const rows = await q<{ cve: string }>(
+    `SELECT vuln_id AS cve FROM findings WHERE vuln_id LIKE 'CVE-%'
+     UNION SELECT unnest(aliases) FROM vulns WHERE id IN (SELECT DISTINCT vuln_id FROM findings)`);
+  const want = new Set(rows.map((r) => r.cve).filter((c) => /^CVE-\d{4}-\d+$/.test(c)));
+  if (!want.size) { await setSetting('epss_synced_at', { at: new Date().toISOString() }); return; }
+  const res = await fetch('https://epss.cyentia.com/epss_scores-current.csv.gz', { headers: { 'user-agent': 'minisoc2' } });
+  if (!res.ok) throw new Error(`EPSS HTTP ${res.status}`);
+  const csv = gunzipSync(Buffer.from(await res.arrayBuffer())).toString('utf8');
+  const out: { cve: string; score: number; pct: number | null }[] = [];
+  for (const line of csv.split('\n')) {
+    if (!line || line[0] === '#') continue;
+    const [cve, score, pct] = line.split(',');
+    if (cve === 'cve' || !want.has(cve)) continue;
+    const s = Number(score);
+    if (!Number.isFinite(s)) continue;
+    out.push({ cve, score: s, pct: pct != null && pct !== '' ? Number(pct) : null });
+  }
+  for (let i = 0; i < out.length; i += 2000) {
+    const b = out.slice(i, i + 2000);
+    await q(
+      `INSERT INTO epss(cve, score, pct) SELECT * FROM unnest($1::text[], $2::real[], $3::real[])
+       ON CONFLICT (cve) DO UPDATE SET score=EXCLUDED.score, pct=EXCLUDED.pct, updated_at=now()`,
+      [b.map((x) => x.cve), b.map((x) => x.score), b.map((x) => x.pct)]);
+  }
+  await setSetting('epss_synced_at', { at: new Date().toISOString() });
+  log(`epss: ${out.length} CVEs scored (of ${want.size} tracked)`);
+}
+
 async function sigmaSync() {
   const f = await q1<{ last_success: Date | null }>("SELECT last_success FROM feed_status WHERE name='sigma'");
   if (f?.last_success && Date.now() - f.last_success.getTime() < 7 * 24 * 3600_000) return;
@@ -377,6 +411,7 @@ async function main() {
     while (!stopping) {
       try { await syncUbuntuOs(); } catch (e) { log(`syncUbuntuOs failed: ${errMsg(e)}`); }
       try { await watchCveAlerts(); } catch (e) { log(`watchCveAlerts failed: ${errMsg(e)}`); }
+      try { await syncEpss(); } catch (e) { log(`syncEpss failed: ${errMsg(e)}`); }
       for (let i = 0; i < 1800 && !stopping; i++) await new Promise((r) => setTimeout(r, 1000));
     }
   })();

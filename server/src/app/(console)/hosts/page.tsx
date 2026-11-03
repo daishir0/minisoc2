@@ -90,31 +90,25 @@ export default async function HostsPage() {
                   </span>
                 </summary>
                 <div className="border-t border-line py-2 pl-7 pr-3 text-sm">
-                  <div className="mb-1 flex flex-wrap items-center gap-3">
-                    {Number(h.cand) > 0 && <Link href={`/hosts/${h.id}`} className="text-xs text-accent">未登録の候補 {h.cand}件を登録 →</Link>}
-                    <Link href={`/hosts/${h.id}`} className="ml-auto text-xs text-accent">ホストの詳細・設定 →</Link>
-                  </div>
                   {/* host-wide units: OS + shared runtime envs, each a remediation target */}
                   {(os && (Number(os.k) + Number(os.c) > 0)) && (
                     <div className="mb-1 flex flex-wrap items-center gap-2 border-l-2 border-red-300 pl-3 py-1">
-                      <span className="font-medium">OS（ホスト全体）</span>
+                      <Link href={os.sid ? `/systems/${os.sid}` : `/actions/${taskKey(h.id, '__os__')}`} className="font-medium text-accent">OS（ホスト全体）</Link>
                       <span className="text-xs text-muted">kernel・glibc・openssl 等</span>
                       <span className="ml-auto flex items-center gap-3 text-xs">
                         <span className={Number(os.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {os.k}</span>
                         <span className={Number(os.c) ? 'font-bold text-red-600' : 'text-muted'}>緊急 {os.c}</span>
-                        <Link href={os.sid ? `/systems/${os.sid}` : `/actions/${taskKey(h.id, '__os__')}`} className="text-accent underline">対処 →</Link>
                       </span>
                     </div>
                   )}
                   {envList.filter((e) => Number(e.k) + Number(e.c) + Number(e.hi) > 0).map((e) => (
                     <div key={e.id} className="mb-1 flex flex-wrap items-center gap-2 border-l-2 border-indigo-300 pl-3 py-1">
-                      <span className="font-medium">実行環境：<Link href={`/systems/${e.id}`} className="text-accent">{e.name}</Link></span>
+                      <Link href={`/systems/${e.id}`} className="font-medium text-accent">実行環境：{e.name}</Link>
                       <span className="text-xs text-muted">共有ランタイム（複数プロジェクトで使用）</span>
                       <span className="ml-auto flex items-center gap-3 text-xs">
                         <span className={Number(e.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {e.k}</span>
                         <span className={Number(e.c) ? 'font-bold text-red-600' : 'text-muted'}>緊急 {e.c}</span>
                         <span className={Number(e.hi) ? 'text-yellow-600' : 'text-muted'}>高 {e.hi}</span>
-                        <Link href={`/systems/${e.id}`} className="text-accent underline">対処 →</Link>
                       </span>
                     </div>
                   ))}
@@ -138,7 +132,6 @@ export default async function HostsPage() {
                             <span className={Number(p.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {p.k}</span>
                             <span className={Number(p.c) ? 'font-bold text-red-600' : 'text-muted'}>緊急 {p.c}</span>
                             <span className={Number(p.hi) ? 'text-yellow-600' : 'text-muted'}>高 {p.hi}</span>
-                            <Link href={`/findings?host=${p.host_id}&system=${encodeURIComponent(p.root)}&all=1`} className="text-muted underline">他 {Number(p.total) - Number(p.k) - Number(p.c) - Number(p.hi)}</Link>
                           </span>
                         </li>
                       ))}

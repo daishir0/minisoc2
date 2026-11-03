@@ -3,6 +3,7 @@
 //   dependencies -> one task per (host, system): each package with the version that clears its findings
 import { q } from './db';
 import { recommendedTarget } from './version';
+import { riskBucket, riskScore, type Bucket } from './risk';
 
 export interface TaskPackage {
   name: string;
@@ -31,6 +32,8 @@ export interface Task {
   exposure: string;
   kev: number;
   critical: number;
+  epss: number | null;   // highest EPSS (exploit probability) among this task's findings
+  bucket: Bucket;        // act / attend / track
   packages: TaskPackage[];
   reboot: boolean;
   command: string;
@@ -156,13 +159,14 @@ export async function listTasks(opts: { hostId?: string; root?: string } = {}): 
   if (opts.root) { params.push(opts.root); extra += ` AND sys=$${params.length}`; }
   const rows = await q<{
     host_id: string; host: string; os_id: string; root: string; name: string | null; exposure: string | null;
-    ecosystem: string; pkg: string; version: string; fixed: string; kev: boolean; severity: string;
+    ecosystem: string; pkg: string; version: string; fixed: string; kev: boolean; severity: string; epss: number | null;
   }>(
     `SELECT f.host_id, h.name AS host, h.os_id, sys AS root, s.name, s.exposure, f.ecosystem, f.pkg,
        COALESCE((SELECT string_agg(DISTINCT p.version, ', ' ORDER BY p.version) FROM host_packages p
          WHERE p.host_id=f.host_id AND p.ecosystem=f.ecosystem AND p.name=f.pkg AND sys = ANY(p.systems)
            AND p.version = ANY(string_to_array(f.version, ', '))), f.version) AS version,
-       f.fixed, f.kev, f.severity
+       f.fixed, f.kev, f.severity,
+       (SELECT max(e.score) FROM epss e WHERE e.cve=f.vuln_id OR e.cve = ANY(SELECT unnest(aliases) FROM vulns v WHERE v.id=f.vuln_id)) AS epss
      FROM findings f JOIN hosts h ON h.id=f.host_id
      CROSS JOIN LATERAL unnest(CASE WHEN cardinality(f.systems)=0 THEN ARRAY['__os__'] ELSE f.systems END) AS sys
      LEFT JOIN systems s ON s.host_id=f.host_id AND s.root=sys
@@ -179,12 +183,13 @@ export async function listTasks(opts: { hostId?: string; root?: string } = {}): 
     const st = state.get(key);
     const t = tasks.get(key) ?? {
       key, hostId: r.host_id, host: r.host, osId: r.os_id, root: r.root, name: r.root === '__os__' ? 'OS' : r.name ?? r.root,
-      exposure: r.exposure ?? 'unknown', kev: 0, critical: 0, packages: [], reboot: false, command: '',
+      exposure: r.exposure ?? 'unknown', kev: 0, critical: 0, epss: null, bucket: 'track', packages: [], reboot: false, command: '',
       status: st?.status ?? 'todo', owner: st?.owner ?? '', due: st?.due ?? null, note: st?.note ?? '', overdue: false, protects: [],
       pk: new Map(), ecos: new Set<string>(),
     };
     if (r.kev) t.kev++;
     else t.critical++;
+    if (r.epss != null) t.epss = Math.max(t.epss ?? 0, r.epss);
     const pkKey = `${r.ecosystem}:${r.pkg}`;
     const p = t.pk.get(pkKey) ?? { name: r.pkg, ecosystem: r.ecosystem, current: r.version.split(',')[0].trim(), target: '', kev: 0, critical: 0, fixes: [] };
     if (r.kev) p.kev++;
@@ -207,10 +212,14 @@ export async function listTasks(opts: { hostId?: string; root?: string } = {}): 
     const protects = protectsFor({ ...rest, packages }, svcs, systems);
     // a fix is as urgent as the most exposed system it protects
     const exposure = protects.some((p) => p.exposure === 'public') ? 'public' : rest.exposure;
-    out.push({ ...rest, exposure, packages, protects, command: command(t.osId, t.root, eco, packages), overdue: t.status === 'hold' && !!t.due && t.due < today });
+    const bucket = riskBucket({ kev: rest.kev > 0, epss: rest.epss, exposure, severity: rest.critical > 0 ? 'critical' : 'high' });
+    out.push({ ...rest, exposure, bucket, packages, protects, command: command(t.osId, t.root, eco, packages), overdue: t.status === 'hold' && !!t.due && t.due < today });
   }
-  // KEV first, then public systems, then size
-  return out.sort((a, b) => Number(b.kev > 0) - Number(a.kev > 0) || Number(b.exposure === 'public') - Number(a.exposure === 'public') || b.kev - a.kev || b.critical - a.critical);
+  // Priority order: Act → Attend → Track, then by risk score (KEV, public exposure, EPSS, size).
+  return out.sort((a, b) =>
+    riskScore({ kev: b.kev > 0, epss: b.epss, exposure: b.exposure, severity: b.critical > 0 ? 'critical' : 'high' })
+    - riskScore({ kev: a.kev > 0, epss: a.epss, exposure: a.exposure, severity: a.critical > 0 ? 'critical' : 'high' })
+    || b.kev - a.kev || b.critical - a.critical);
 }
 
 // Open detections that need a human look (not vulnerabilities): intrusion signs and monitoring health.

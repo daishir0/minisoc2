@@ -31,8 +31,11 @@ export interface PickFinding {
 
 // Lets the user tick specific CVEs on a project and generates a copy-paste Claude Code prompt that
 // asks for a safe, backup-first upgrade plan. Advisory only — the human runs Claude Code on the host.
-export function RemediationPicker({ host, address, path, system, systemId, osId, findings }: {
+export function RemediationPicker({ host, address, path, system, systemId, osId, findings, title, emptyNote, bulk }: {
   host: string; address: string; path: string; system: string; systemId: number; osId?: string; findings: PickFinding[];
+  title?: string;      // optional heading (used when the OS picker is split into kernel / non-kernel cards)
+  emptyNote?: string;  // shown instead of the table when there are no findings in this scope (e.g. 対処不要)
+  bulk?: boolean;      // OS "everything else" mode: one distro-wide security-update prompt, not per-CVE
 }) {
   const isOs = osId !== undefined;
   const oid = osId ?? '';
@@ -183,7 +186,32 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
     `5. 実行は人間の承認後。破壊的操作やサービス停止は必要最小限に。`,
     `6. 完了後、対象ホストで収集を実行（minisoc2 画面の「今すぐ収集」ボタンでも可）し、minisoc2 上で解消を確認する。`,
   ].join('\n');
-  const prompt = isOs ? osPrompt : appPrompt;
+  // OS "everything else" = a single distro security update, not per-CVE. Scope lists use ALL findings
+  // (not the selection) because the bulk command patches them together regardless of what's ticked.
+  const allPkgs = [...new Set(findings.map((f) => f.pkg))];
+  const allCves = [...new Set(findings.map((f) => f.cve))];
+  const kevAll = findings.filter((f) => f.kev).length;
+  const bulkCmd = { apt: 'sudo apt-get update && sudo apt-get upgrade', dnf: "sudo dnf upgrade --security --exclude='kernel*'", apk: 'sudo apk upgrade', zypper: 'sudo zypper patch', unknown: '（このOSのパッケージマネージャで利用可能なセキュリティ更新を一括適用）' }[mgr];
+  const restartChk = { apt: 'sudo needs-restarting -r 2>/dev/null || sudo checkrestart || true', dnf: 'sudo needs-restarting -r || true', apk: '（再起動が要るサービスを手動確認）', zypper: 'sudo zypper ps -s', unknown: '' }[mgr];
+  const osBulkPrompt = findings.length === 0 ? '（未解消のOSパッケージ脆弱性はありません＝対処不要）' : [
+    `ホスト「${host}」の **OSパッケージ（カーネル以外）** に minisoc2 が ${allCves.length} 件（${kevAll ? `KEV ${kevAll}・` : ''}緊急含む／パッケージ ${allPkgs.length}種）を検出しています。これは**1件ずつ上げるものではなく、ディストロのセキュリティ更新で一括適用**するのが正道です。CVE一覧は「この更新で解消される範囲（根拠）」であって、個別選択の対象ではありません。`,
+    ``,
+    `# 手順（一括）`,
+    `1. **現状確認（読み取り）**：\`${dryRun}\``,
+    `2. **スナップショット/AMI 取得**（クラウドは特に。問題時はここへ戻す）。`,
+    `3. **一括適用（カーネルは別枠で計画実行するため除外）**：`,
+    `    ${bulkCmd}`,
+    `4. **稼働サービスの再起動**：更新後も旧ライブラリを掴んだプロセスが残ると実質未解消。要再起動を確認して再起動：`,
+    ...(restartChk ? [`    ${restartChk}`] : []),
+    `    例：\`sudo systemctl restart httpd\`（Apache/OpenSSL 等を更新した場合）。カーネルを更新した場合のみ再起動が必要だが、本手順ではカーネルは除外している。`,
+    `5. **止めたいものは個別に hold**（使っていない/互換性懸念があるパッケージ）。意味の無い更新の強行はしない。`,
+    `6. 完了後、minisoc2 の「今すぐ収集」で解消を確認。残るのは配布元待ち（修正版未リリース）等＝それは正しい。`,
+    ``,
+    `# 解消される範囲（根拠・抜粋）`,
+    `- 対象パッケージ（${allPkgs.length}種）：${allPkgs.slice(0, 30).join('、')}${allPkgs.length > 30 ? ` 他${allPkgs.length - 30}種` : ''}`,
+    `- 対象CVE（${allCves.length}件）：${allCves.slice(0, 20).join('、')}${allCves.length > 20 ? ` 他${allCves.length - 20}件` : ''}`,
+  ].join('\n');
+  const prompt = bulk ? osBulkPrompt : isOs ? osPrompt : appPrompt;
 
   const copy = async () => {
     try { await navigator.clipboard.writeText(prompt); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked */ }
@@ -213,7 +241,16 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   };
   const LABEL: Record<string, string> = { kev: 'KEV', critical: '緊急', high: '高', medium: '中', low: '低' };
 
-  return (
+  if (findings.length === 0 && emptyNote) {
+    return (
+      <div className="space-y-2">
+        {title && <h3 className="text-sm font-semibold">{title}</h3>}
+        <p className="rounded border border-line bg-bg p-3 text-xs text-muted">{emptyNote}</p>
+      </div>
+    );
+  }
+
+  const listBody = (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center gap-3 text-xs">
         <span className="text-muted">{sel.size} / {visible.length} 件を選択中</span>
@@ -226,7 +263,7 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
           ))}
         </span>
       </div>
-      {extraNote && (
+      {extraNote && !bulk && (
         <p className="text-xs text-muted">
           初期選択は KEV・緊急のみです。これ以外に{extraNote}の脆弱性も検出しています（下の一覧でチェックすれば同じプロンプトに含められます）。
         </p>
@@ -265,8 +302,25 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
           })}
         </tbody></table>
       </div>
-      <div className="flex justify-end">
-        <button type="button" onClick={copy} disabled={cves.length === 0} className="btn-ghost text-xs disabled:opacity-50">{copied ? 'コピーしました' : 'クリップボードにコピー'}</button>
+    </div>
+  );
+
+  return (
+    <div className="space-y-3">
+      {title && <h3 className="text-sm font-semibold">{title}</h3>}
+      {bulk && (
+        <p className="text-xs text-muted">このOSは<b>個別に選ぶのではなく一括更新</b>が正道です。下のプロンプトをそのまま対象ホストで実行してください。対象一覧（{findings.length}件）は参考として折りたたんであります。</p>
+      )}
+      {bulk ? (
+        <details className="rounded border border-line p-2">
+          <summary className="cursor-pointer text-xs text-muted">対象一覧（{findings.length}件・参考）／特定パッケージを「影響なし」登録したい時もここから</summary>
+          <div className="mt-3">{listBody}</div>
+        </details>
+      ) : listBody}
+      {/* On phones the CVE list is long; keep the primary copy action within thumb reach as a sticky
+          bottom bar. On >=sm it returns to a normal right-aligned button. */}
+      <div className="sticky bottom-0 z-10 flex justify-end border-t border-line bg-bg/95 py-2 backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:py-0 sm:backdrop-blur-none">
+        <button type="button" onClick={copy} disabled={prompt.startsWith('（')} className="btn w-full text-sm disabled:opacity-50 sm:w-auto sm:text-xs">{copied ? 'コピーしました' : '📋 プロンプトをコピー'}</button>
       </div>
 
       {/* One-click bulk VEX: mark all checked CVEs "not affected" with a single justification. */}
