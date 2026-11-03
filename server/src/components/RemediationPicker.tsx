@@ -31,11 +31,12 @@ export interface PickFinding {
 
 // Lets the user tick specific CVEs on a project and generates a copy-paste Claude Code prompt that
 // asks for a safe, backup-first upgrade plan. Advisory only — the human runs Claude Code on the host.
-export function RemediationPicker({ host, address, path, system, systemId, osId, findings, title, emptyNote, bulk }: {
+export function RemediationPicker({ host, address, path, system, systemId, osId, findings, title, emptyNote, bulk, hostId }: {
   host: string; address: string; path: string; system: string; systemId: number; osId?: string; findings: PickFinding[];
   title?: string;      // optional heading (used when the OS picker is split into kernel / non-kernel cards)
   emptyNote?: string;  // shown instead of the table when there are no findings in this scope (e.g. 対処不要)
   bulk?: boolean;      // OS "everything else" mode: one distro-wide security-update prompt, not per-CVE
+  hostId?: string;     // minisoc2 host id, shown in the target-host header to prevent running on the wrong host
 }) {
   const isOs = osId !== undefined;
   const oid = osId ?? '';
@@ -114,7 +115,19 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   const kernelCmd = CMDS.kernel;
   const otherCmd = osOtherPkgs.length ? CMDS.other : '';
   const dryRun = CMDS.dry;
+  // Host-identity header, prepended to every generated prompt so the same text is never accidentally
+  // run on the wrong host (same host or a different one). Values are runtime data, not hardcoded.
+  const idHeader = [
+    `# 実行対象ホスト（取り違え防止・必ず確認）`,
+    `- ホスト名 : ${host}`,
+    `- 接続先   : ${address || '不明'}`,
+    ...(hostId ? [`- ホストID : ${hostId}（minisoc2 の識別子）`] : []),
+    `- 対象     : ${isOs ? 'OSパッケージ（ホスト全体）' : `プロジェクト ${system}（${path}）`}`,
+    '作業前に `hostname` を実行し、このプロンプトが想定するホスト（上記）と一致することを確認してください。別のホストでは実行しないこと（一致しなければ中止）。',
+    ``,
+  ];
   const osPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
+    ...idHeader,
     `ホスト「${host}」の **OS パッケージ（ホスト全体）** について、minisoc2 が ${cves.length} 件（${kevN2 ? `KEV ${kevN2}・` : ''}緊急含む）を検出しています。これは**対処の起点リスト**です。件数・CVEを鵜呑みにせず、まず実データで残存を確認してから、安全に適用してください。`,
     ``,
     `# 重要（誤解しやすい点）`,
@@ -161,7 +174,8 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
     `- **別env・別プロジェクトの同名パッケージと混同しない**こと。版は必ず Location／\`__file__\` 付きで報告してください。`,
   ];
   const appPrompt = cves.length === 0 ? '（上の一覧で対象のCVEにチェックを入れてください）' : [
-    `${host} のホスト（ホスト名：${host}、接続先：${address || '不明'}）の、${path} にあるシステム「${system}」について、脆弱性 ${cves.join('、')} の対応可否を判断し、必要なら安全に解消してください。`,
+    ...idHeader,
+    `上記ホストの ${path} にあるシステム「${system}」について、脆弱性 ${cves.join('、')} の対応可否を判断し、必要なら安全に解消してください。`,
     ``,
     `# 対象パッケージ（現状 → 修正版の目安）`,
     ...pkgs.map((p) => `- ${p.pkg}: ${p.version || '(現行不明)'}${p.target ? ` → ${p.target} 以上（できれば同一メジャー系列の最新安定版）` : '（修正版は要確認）'}${p.kev ? '  ［KEV: 悪用確認済み・最優先］' : ''}`),
@@ -194,6 +208,7 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   const bulkCmd = { apt: 'sudo apt-get update && sudo apt-get upgrade', dnf: "sudo dnf upgrade --security --exclude='kernel*'", apk: 'sudo apk upgrade', zypper: 'sudo zypper patch', unknown: '（このOSのパッケージマネージャで利用可能なセキュリティ更新を一括適用）' }[mgr];
   const restartChk = { apt: 'sudo needs-restarting -r 2>/dev/null || sudo checkrestart || true', dnf: 'sudo needs-restarting -r || true', apk: '（再起動が要るサービスを手動確認）', zypper: 'sudo zypper ps -s', unknown: '' }[mgr];
   const osBulkPrompt = findings.length === 0 ? '（未解消のOSパッケージ脆弱性はありません＝対処不要）' : [
+    ...idHeader,
     `ホスト「${host}」の **OSパッケージ（カーネル以外）** に minisoc2 が ${allCves.length} 件（${kevAll ? `KEV ${kevAll}・` : ''}緊急含む／パッケージ ${allPkgs.length}種）を検出しています。これは**1件ずつ上げるものではなく、ディストロのセキュリティ更新で一括適用**するのが正道です。CVE一覧は「この更新で解消される範囲（根拠）」であって、個別選択の対象ではありません。`,
     ``,
     `# 手順（一括）`,

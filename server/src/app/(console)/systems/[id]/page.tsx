@@ -144,17 +144,17 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
             {isOs ? (
               <div className="space-y-6">
                 <p className="text-xs text-muted">推奨順：まず<b>②その他</b>（原則ダウンタイム不要）、<b>①カーネル</b>はスナップショット取得後に計画的な再起動で。ただし KEV・緊急のカーネル脆弱性があれば①を最優先。</p>
-                <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={oid}
+                <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={oid} hostId={s.host_id}
                   title="① カーネル（要再起動・計画実行）"
                   emptyNote="現在カーネルに未解消の脆弱性はありません（対処不要）。カーネルCVEは新カーネルへの更新＋再起動で累積的に解消されます。ここに項目が戻ってきたら対応してください。"
                   findings={pf.filter((f) => isKernel(f.pkg))} />
-                <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={oid} bulk
+                <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={oid} hostId={s.host_id} bulk
                   title="② その他のOSパッケージ（随時・サービス再起動のみ）"
                   emptyNote="現在カーネル以外のOSパッケージに未解消の脆弱性はありません（対処不要）。"
                   findings={pf.filter((f) => !isKernel(f.pkg))} />
               </div>
             ) : (
-              <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={oid} findings={pf} />
+              <RemediationPicker host={s.host} address={address} path={s.root} system={s.name} systemId={s.id} osId={oid} hostId={s.host_id} findings={pf} />
             )}
           </Card>
         );

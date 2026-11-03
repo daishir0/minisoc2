@@ -4,7 +4,7 @@ import { remediationPrompt, type Task } from '../../src/lib/tasks';
 
 const base: Task = {
   key: 'k', hostId: 'h', host: 'web1', osId: 'amzn', root: '__os__', name: 'OS', exposure: 'public',
-  kev: 2, critical: 3, epss: null, bucket: 'act', packages: [{ name: 'openssl', ecosystem: 'rpm', current: '1:3.0.1', target: '1:3.0.8', kev: 1, critical: 1 }],
+  kev: 2, critical: 3, epss: null, bucket: 'act', address: 'web1.example', packages: [{ name: 'openssl', ecosystem: 'rpm', current: '1:3.0.1', target: '1:3.0.8', kev: 1, critical: 1 }],
   reboot: true, command: 'sudo dnf upgrade --releasever=latest openssl', status: 'todo', owner: '', due: null, note: '', overdue: false, protects: [],
 };
 

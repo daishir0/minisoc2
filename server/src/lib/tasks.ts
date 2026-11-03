@@ -26,6 +26,7 @@ export interface Task {
   key: string; // `${hostId}~${encodeURIComponent(root)}`
   hostId: string;
   host: string;
+  address: string;   // connection target: hostname (push) or SSH host (pull); '' if unknown
   osId: string;
   root: string;
   name: string;
@@ -54,6 +55,13 @@ export function remediationPrompt(t: Task, opts: { pull?: boolean } = {}): strin
   const where = isOs ? 'OSパッケージ' : `プロジェクト ${t.name}（${t.root}）`;
   const lines = [
     `あなたはホスト「${t.host}」上で動作している Claude Code です。以下の脆弱性修正だけを、安全に実施してください。ここに書かれていない変更は行わないこと。`,
+    ``,
+    `# 実行対象ホスト（取り違え防止・必ず確認）`,
+    `- ホスト名 : ${t.host}`,
+    `- 接続先   : ${t.address || '不明'}`,
+    `- ホストID : ${t.hostId}（minisoc2 の識別子）`,
+    `- 対象     : ${where}`,
+    `作業前に \`hostname\` を実行し、このプロンプトが想定するホスト（上記）と一致することを確認してください。別のホストでは実行しないこと（一致しなければ中止）。`,
     ``,
     `# 対象`,
     `- ${where}`,
@@ -159,15 +167,17 @@ export async function listTasks(opts: { hostId?: string; root?: string } = {}): 
   if (opts.root) { params.push(opts.root); extra += ` AND sys=$${params.length}`; }
   const rows = await q<{
     host_id: string; host: string; os_id: string; root: string; name: string | null; exposure: string | null;
-    ecosystem: string; pkg: string; version: string; fixed: string; kev: boolean; severity: string; epss: number | null;
+    ecosystem: string; pkg: string; version: string; fixed: string; kev: boolean; severity: string; epss: number | null; address: string;
   }>(
     `SELECT f.host_id, h.name AS host, h.os_id, sys AS root, s.name, s.exposure, f.ecosystem, f.pkg,
+       COALESCE(CASE WHEN h.kind='pull' THEN pt.ssh_host ELSE h.hostname END, '') AS address,
        COALESCE((SELECT string_agg(DISTINCT p.version, ', ' ORDER BY p.version) FROM host_packages p
          WHERE p.host_id=f.host_id AND p.ecosystem=f.ecosystem AND p.name=f.pkg AND sys = ANY(p.systems)
            AND p.version = ANY(string_to_array(f.version, ', '))), f.version) AS version,
        f.fixed, f.kev, f.severity,
        (SELECT max(e.score) FROM epss e WHERE e.cve=f.vuln_id OR e.cve = ANY(SELECT unnest(aliases) FROM vulns v WHERE v.id=f.vuln_id)) AS epss
      FROM findings f JOIN hosts h ON h.id=f.host_id
+     LEFT JOIN pull_targets pt ON pt.host_id=h.id
      CROSS JOIN LATERAL unnest(CASE WHEN cardinality(f.systems)=0 THEN ARRAY['__os__'] ELSE f.systems END) AS sys
      LEFT JOIN systems s ON s.host_id=f.host_id AND s.root=sys
      WHERE f.status='open' AND (f.kev OR f.severity='critical') AND NOT h.disabled AND NOT COALESCE(s.ignored, false) ${extra}`,
@@ -182,7 +192,7 @@ export async function listTasks(opts: { hostId?: string; root?: string } = {}): 
     const key = taskKey(r.host_id, r.root);
     const st = state.get(key);
     const t = tasks.get(key) ?? {
-      key, hostId: r.host_id, host: r.host, osId: r.os_id, root: r.root, name: r.root === '__os__' ? 'OS' : r.name ?? r.root,
+      key, hostId: r.host_id, host: r.host, address: r.address ?? '', osId: r.os_id, root: r.root, name: r.root === '__os__' ? 'OS' : r.name ?? r.root,
       exposure: r.exposure ?? 'unknown', kev: 0, critical: 0, epss: null, bucket: 'track', packages: [], reboot: false, command: '',
       status: st?.status ?? 'todo', owner: st?.owner ?? '', due: st?.due ?? null, note: st?.note ?? '', overdue: false, protects: [],
       pk: new Map(), ecos: new Set<string>(),
