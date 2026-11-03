@@ -16,15 +16,22 @@ What it detects today:
 | Debian / Ubuntu / Alpine packages | OSV.dev |
 | RPM distros (Amazon Linux, RHEL family): pending security updates | the host's own `dnf updateinfo` (with `--releasever=latest` on Amazon Linux 2023) |
 | Actively exploited vulnerabilities | [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) |
+| Exploit probability (next 30 days) | [FIRST EPSS](https://www.first.org/epss/) |
 | Hosts that stopped reporting, stale vulnerability feeds | the server itself |
 | New listening ports, new login accounts, changed `authorized_keys` / `sudoers` / `passwd` / cron files | agent host state |
 | Watched CVEs (alert when they appear and when the fix lands) | the server itself |
 
 The first report from a host sets a baseline (one summary mail). After that, only new findings are alerted. A finding you have judged "not affected" can be suppressed with a CycloneDX VEX justification, so the decision is recorded.
 
+E-mail is action-first: an **immediate** mail covers only the "Act now" items (KEV, high-EPSS, plus host/feed/disk health and intrusion signals), and a **daily digest** leads with today's top remediation tasks (and how many were resolved in the last 24h). Every line links straight to the page where the fix prompt is one click away — so ordinary low-EPSS criticals no longer flood the inbox.
+
 **Log monitoring**: each run also sends new journald entries and log files (`/var/log/secure`, `auth.log`, fail2ban, Apache/nginx access logs; configurable) incrementally, and applications can push lines any time with `minisoc2-agent send-log`. Rules raise alerts for SSH logins from new IPs, brute force, sudo failures, sudo by new users, account creation, sensitive web paths answered with 200, 404 scan bursts and audit keys; a daily check flags sources whose volume is 3x their 7-day average. Raw logs are kept for a configurable period (default 30 days, daily partitions) and stop being stored above a disk usage threshold; daily aggregates are kept forever.
 
 AI-defense features (implemented):
+- **Prioritisation — "which do I do first"**: every finding is placed in **Act / Attend / Track** buckets from KEV, EPSS (exploit probability), public exposure and severity, so a long list collapses into today's few. The home page leads with the top tasks, `/findings` sorts by this priority and shows EPSS% and the bucket, and e-mail is Act-driven.
+- **Remediation units**: a host's findings are grouped by *how they are fixed* — **kernel** (reboot), **the rest of the OS** (one bulk `dnf upgrade --security` / `apt upgrade`, not per-CVE) and **each project / shared runtime env** — each one click from its copy-paste Claude Code prompt and a per-unit trend sparkline.
+- **OS fix status**: still-open OS findings are colour-coded **released** (a fixed version is available → upgrade resolves it) vs **pending** (the vendor fix is not yet published → nothing to apply now), using the distro's own security tracker (Ubuntu) and `dnf` advisories (RPM) as the authority.
+- **Trend charts**: the home and host pages show a 90-day stacked-area history of open findings by severity (with a live "today" point) so the backlog and how far it has been cut down are visible at a glance.
 - **File-integrity (AIDE-style)**: the agent hashes watched system paths read-only; the baseline lives on the server and auto-promotes, and changes to SSH keys, sudoers, passwd/shadow, binaries, cron or systemd units raise alerts.
 - **Log threat detection (Sigma)**: SigmaHQ Linux rules are synced and compiled to line matchers, run alongside the built-in high-signal rules.
 - **Pull-type hosts (read-only SSH)**: for hosts that cannot run the agent (e.g. shared hosting / Sakura rental server) — lockfile SBOM, runtime versions, ports and daily logs over SSH, no root required, no writes.
@@ -152,15 +159,22 @@ minisoc2 は、数台〜数百台の Linux サーバーを見守る軽量なセ�
 | Debian / Ubuntu / Alpine のパッケージ | OSV.dev |
 | RPM 系（Amazon Linux・RHEL 系）の未適用セキュリティ更新 | ホスト自身の `dnf updateinfo`（AL2023 では `--releasever=latest`） |
 | 悪用が確認された脆弱性 | [CISA KEV](https://www.cisa.gov/known-exploited-vulnerabilities-catalog) |
+| 悪用確率（今後30日） | [FIRST EPSS](https://www.first.org/epss/) |
 | 報告が途絶えたホスト・古くなった脆弱性フィード | サーバー自身 |
 | 新しい待受ポート、新規ログインアカウント、`authorized_keys`／`sudoers`／`passwd`／cron の変更 | エージェントのホスト状態 |
 | 監視中の CVE（出現時と修正到達時に通知） | サーバー自身 |
 
 ホストの初回報告は基準線になります（まとめメール1通）。以降は新しく見つかったものだけを通知します。「影響なし」と判断した項目は CycloneDX VEX の理由付きで抑止でき、判断が記録として残ります。
 
+メールは行動ファーストです。**即時メール**は「今すぐ対応（Act）」だけ（KEV・EPSS高＋ホスト/フィード/ディスクの健全性・侵入の兆候）を送り、**日次ダイジェスト**は今日やるべき上位タスク（と直近24時間で解消した件数）を先頭に出します。各行はプロンプトを1クリックでコピーできる対応ページへ直リンク。EPSS の低い通常の緊急がメールを埋め尽くすことはなくなります。
+
 **ログ監視**：各実行で journald とログファイル（`/var/log/secure`、`auth.log`、fail2ban、Apache/nginx のアクセスログ。設定可能）の新着を差分送信し、アプリからは `minisoc2-agent send-log` でいつでも行を送れます。新しい IP からの SSH ログイン、ブルートフォース、sudo 失敗、新規ユーザーの sudo、アカウント作成、200 応答した機微な Web パス、404 スキャンの多発、監査キーなどをルールで通知し、日次で「直近7日平均の3倍」の急増源を検出します。生ログは設定期間（既定30日・日次パーティション）保持し、ディスク使用率が閾値を超えると保存を停止します（日次集計は恒久保持）。
 
 AI 防御機能（実装済み）：
+- **優先順位付け（どれからやるか）**：各脆弱性を **今すぐ（Act）／今週（Attend）／様子見（Track）** のバケツに分類します（KEV・EPSS＝悪用確率・公開露出・深刻度で判定）。長い一覧が「今日やる数件」に畳まれます。ホームは上位タスクを先頭に出し、`/findings` はこの優先度で並べ EPSS% とバケツを表示、メールも Act 駆動です。
+- **対応ユニット（直し方で束ねる）**：ホストの脆弱性を「直し方」でまとめます。**カーネル**（要再起動）／**カーネル以外の OS**（1発の `dnf upgrade --security`・`apt upgrade` の一括更新。CVE 個別ではない）／**各プロジェクト・共有実行環境**。それぞれ 1クリックでコピペ用プロンプトへ行け、ユニットごとの推移スパークライン付き。
+- **OS の対処可否**：未解消の OS 脆弱性を **released（修正版あり＝上げれば直る）** と **pending（配布元が未リリース＝今は対処不能）** に色分けします。判定は配布元トラッカー（Ubuntu）と `dnf` 勧告（RPM）を権威に。
+- **推移グラフ**：ホームとホスト画面に、未解消件数の90日積み上げ推移（現在値の点つき）を表示。残量と「どれだけ減らせたか」が一目で分かります。
 - **ファイル改ざん検知（AIDE 相当）**：エージェントが監視対象のシステムパスを読み取り専用でハッシュ化。基準線はサーバー側で自動確定し、SSH 鍵・sudoers・passwd/shadow・バイナリ・cron・systemd ユニットの変更を通知します。
 - **ログ脅威検知（Sigma）**：SigmaHQ の Linux ルールを同期・行マッチャにコンパイルし、内蔵の高シグナルルールと併用します。
 - **プル型ホスト（読み取り専用 SSH）**：エージェントを動かせないホスト（共用ホスティング／さくらのレンタルサーバー等）向けに、lockfile の SBOM・実行環境のバージョン・ポート・日次ログを SSH で収集。root 不要・書き込みなし。
