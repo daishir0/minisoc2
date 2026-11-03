@@ -555,10 +555,20 @@ export async function dismissOnboarding(): Promise<void> {
 export async function addExclude(fd: FormData): Promise<void> {
   const u = await requireUser();
   const systemId = Number(fd.get('systemId'));
-  const pattern = String(fd.get('pattern') ?? '').trim().replace(/^\.?\/+/, '').slice(0, 300);
+  let pattern = String(fd.get('pattern') ?? '').trim().replace(/^\.?\/+/, '').slice(0, 300);
   const reason = String(fd.get('reason') ?? '').trim().slice(0, 500);
   const review = /^\d{4}-\d{2}-\d{2}$/.test(String(fd.get('review') ?? '')) ? String(fd.get('review')) : null;
   if (!systemId || !pattern || !reason || pattern.includes('..')) return;
+  // Patterns are matched RELATIVE to the system root. If the user pasted a full path (absolute, or
+  // starting with the root), strip the root prefix so "<root>/data/**" becomes "data/**" and actually
+  // matches — otherwise the exclusion silently does nothing.
+  const sysRoot = (await q<{ root: string }>('SELECT root FROM systems WHERE id=$1', [systemId]))[0]?.root;
+  if (sysRoot) {
+    const base = sysRoot.replace(/^\/+/, '').replace(/\/+$/, '');
+    if (pattern === base) pattern = '**';
+    else if (pattern.startsWith(base + '/')) pattern = pattern.slice(base.length + 1);
+  }
+  if (!pattern || pattern.includes('..')) return;
   const r = await q<{ host_id: string; name: string }>(
     `WITH ins AS (INSERT INTO system_excludes(system_id, pattern, reason, created_by, review_date) VALUES ($1,$2,$3,$4,$5)
        ON CONFLICT (system_id, pattern) DO UPDATE SET reason=EXCLUDED.reason, review_date=EXCLUDED.review_date RETURNING system_id)

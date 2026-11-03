@@ -233,7 +233,7 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
           )}
           <form action={addExclude} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto_auto]">
             <input type="hidden" name="systemId" value={s.id} />
-            <input name="pattern" className="input font-mono" placeholder="data/**" required />
+            <input name="pattern" className="input font-mono" placeholder="ルート相対（例 research/** や data/環境/**）" required />
             <input name="reason" className="input" placeholder="理由（例：検証用の脆弱なアプリ）" required />
             <input name="review" type="date" className="input" title="見直し期限（任意）" />
             <button className="btn">除外を追加</button>
