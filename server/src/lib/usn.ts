@@ -16,6 +16,7 @@ import type { UbuntuCve } from './distro';
 const USN_DB_URL = 'https://usn.ubuntu.com/usn-db/database.json.bz2';
 const REFRESH_MS = 20 * 60 * 60 * 1000; // re-fetch at most ~daily
 const FETCH_TIMEOUT_MS = 120_000;
+const MIN_HEALTHY = 2000; // a real Ubuntu release maps thousands of CVEs; below this = partial/bad fetch
 
 export type UsnMap = Map<string, Map<string, Record<string, string>>>; // release -> CVE -> {source: fixedVersion}
 
@@ -71,6 +72,11 @@ async function build(releases: string[]): Promise<UsnMap> {
     for (const [cve, srcs] of Object.entries(cves)) relMap.set(cve, srcs);
     map.set(rel, relMap);
   }
+  // Sanity floor: a real Ubuntu release maps thousands of CVEs. A tiny result means a truncated/partial
+  // download or a bad parse — throw so getUsnMap keeps the PREVIOUS good cache instead of caching (and
+  // serving for ~20h) a near-empty map that would wipe host_os_fixed and reopen handled findings.
+  const biggest = Math.max(0, ...[...map.values()].map((m) => m.size));
+  if (biggest < MIN_HEALTHY) throw new Error(`USN map too small (max ${biggest} < ${MIN_HEALTHY}) — treating as failed`);
   return map;
 }
 

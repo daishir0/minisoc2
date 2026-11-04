@@ -129,11 +129,11 @@ async function syncUbuntuOs() {
   // If the USN DB could not be fetched/parsed this pass (intermittent network), skip entirely:
   // rebuilding host_os_fixed from an empty map would WIPE valid suppressions and reopen already-handled
   // findings. Keep the previous state and try again next pass.
-  if (![...usn.values()].some((m) => m.size)) { log('syncUbuntuOs: USN DB unavailable this pass — keeping existing suppressions'); return; }
+  if (![...usn.values()].some((m) => m.size >= 1000)) { log('syncUbuntuOs: USN DB unavailable/too small this pass — keeping existing suppressions'); return; }
   for (const h of hosts) {
     const codename = UBUNTU_CODENAME[h.os_version];
     if (!codename) continue;
-    if (!usn.get(codename)?.size) continue; // no USN data for this release this pass — don't wipe its suppressions
+    if ((usn.get(codename)?.size ?? 0) < 1000) continue; // partial/empty USN for this release — don't wipe its suppressions
     // Judge EACH finding's own package (single-package verdict) so a different kernel line's leftover
     // package can't make a flavor-fixed CVE look vulnerable.
     const findings = await q<{ vuln_id: string; pkg: string; version: string }>("SELECT vuln_id, pkg, version FROM findings WHERE host_id=$1 AND status='open' AND (ecosystem LIKE 'Ubuntu:%' OR ecosystem='os') AND '__os__' = ANY(systems)", [h.id]);
