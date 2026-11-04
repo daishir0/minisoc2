@@ -157,7 +157,12 @@ async function syncUbuntuOs() {
     const cur = (await q<{ vuln_id: string; pkg: string }>('SELECT vuln_id, pkg FROM host_os_fixed WHERE host_id=$1', [h.id])).map((r) => `${r.vuln_id}\u0000${r.pkg}`);
     const want = fixed.map((x) => `${x.vuln_id}\u0000${x.pkg}`);
     const same = cur.length === want.length && want.every((x) => cur.includes(x));
-    if (!same) {
+    // Anti-collapse backstop: confirmed-fixed CVEs don't un-fix, so an established set never legitimately
+    // shrinks by half. If a rebuild would (a partial USN map that still passed the size guard, a transient
+    // verdict miss), treat it as bad input and keep the existing suppressions rather than reopen findings.
+    if (!same && cur.length >= 20 && want.length < cur.length / 2) {
+      log(`syncUbuntuOs ${h.id.slice(0, 8)}: ${want.length} fixed vs existing ${cur.length} — suspicious collapse, keeping existing`);
+    } else if (!same) {
       await q('DELETE FROM host_os_fixed WHERE host_id=$1', [h.id]);
       for (const x of fixed) await q('INSERT INTO host_os_fixed(host_id, vuln_id, pkg) VALUES ($1,$2,$3) ON CONFLICT DO NOTHING', [h.id, x.vuln_id, x.pkg]);
       await q('UPDATE hosts SET needs_match=true WHERE id=$1', [h.id]);
