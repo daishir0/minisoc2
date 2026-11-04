@@ -137,7 +137,11 @@ async function syncUbuntuOs() {
     if ((usn.get(codename)?.size ?? 0) < 1000) continue; // partial/empty USN for this release — don't wipe its suppressions
     // Judge EACH finding's own package (single-package verdict) so a different kernel line's leftover
     // package can't make a flavor-fixed CVE look vulnerable.
-    const findings = await q<{ vuln_id: string; pkg: string; version: string }>("SELECT vuln_id, pkg, version FROM findings WHERE host_id=$1 AND status='open' AND (ecosystem LIKE 'Ubuntu:%' OR ecosystem='os') AND '__os__' = ANY(systems)", [h.id]);
+    // Include 'resolved' too, not just 'open': once this function suppresses a CVE (via host_os_fixed),
+    // matching marks that finding resolved, so an 'open'-only query would stop seeing it next pass and
+    // compute a smaller fixed-set, dropping the suppression and reopening it — a 476<->9 oscillation.
+    // host_os_fixed must be a stable function of (installed packages, USN), independent of finding status.
+    const findings = await q<{ vuln_id: string; pkg: string; version: string }>("SELECT vuln_id, pkg, version FROM findings WHERE host_id=$1 AND status IN ('open','resolved') AND (ecosystem LIKE 'Ubuntu:%' OR ecosystem='os') AND '__os__' = ANY(systems)", [h.id]);
     const fixed: { vuln_id: string; pkg: string }[] = [];
     const status: { vuln_id: string; pkg: string; status: string; fixed: string }[] = [];
     for (const f of findings) {
