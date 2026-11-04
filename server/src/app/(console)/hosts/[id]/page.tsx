@@ -11,16 +11,17 @@ import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { taskKey } from '@/lib/tasks';
 import { AgentConfigCard, type AgentConfig } from '@/components/AgentConfigCard';
 import { ConfirmCollect } from '@/components/ConfirmCollect';
-import { TrendChart, SparkLine } from '@/components/Timeline';
+import { TrendChart, SparkLine, type TrendPoint } from '@/components/TrendChart';
 import { agentDistDir } from '@/lib/agentdist';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 // One remediation unit (kernel / non-kernel OS / a project env). This is the core repeated card of the
 // host screen: status at a glance + one click into its remediation prompt. Kept generic (no host-specifics).
-function UnitCard({ icon, title, sub, kev, crit, high, total, href, badge, spark }: {
-  icon: string; title: string; sub?: string; kev: number; crit: number; high: number; total: number; href: string; badge?: ReactNode; spark?: number[];
+function UnitCard({ icon, title, sub, kev, crit, high, total, href, badge, trend }: {
+  icon: string; title: string; sub?: string; kev: number; crit: number; high: number; total: number; href: string; badge?: ReactNode; trend?: TrendPoint[];
 }) {
+  const spark = trend?.map((p) => p.kev + p.critical + p.high + p.medium + p.low);
   const tone = kev > 0 || crit > 0 ? 'border-l-red-500' : high > 0 ? 'border-l-orange-400' : total > 0 ? 'border-l-yellow-400' : 'border-l-green-500';
   return (
     <div className={`flex flex-col gap-2 rounded-lg border border-line border-l-4 ${tone} bg-bg p-4`}>
@@ -39,7 +40,7 @@ function UnitCard({ icon, title, sub, kev, crit, high, total, href, badge, spark
             <span className="text-muted">計 {total}</span>
           </>
         ) : <span className="font-medium text-green-600">対処不要（未対応なし）</span>}
-        {spark && spark.length > 1 && <span className="ml-auto" title="このユニットの件数の推移（緑＝改善）"><SparkLine values={spark} /></span>}
+        {spark && spark.length > 1 && trend && <span className="ml-auto" title="クリックで拡大（日次の件数を表示）"><SparkLine values={spark} detail={{ points: trend, title: `${title} の推移` }} /></span>}
       </div>
       <div className="mt-auto pt-1">
         <Link href={href} className={total > 0 ? 'btn text-xs' : 'btn-ghost text-xs'}>{total > 0 ? '対応する →' : '詳細 →'}</Link>
@@ -113,13 +114,13 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   const osK = osSplit.find((r) => r.kind === 'kernel');
   const osO = osSplit.find((r) => r.kind === 'other');
   const osHref = osRow.sid ? `/systems/${osRow.sid}` : `/actions/${taskKey(h.id, '__os__')}`;
-  // Per-unit (system_root) daily totals for the unit-card sparklines (last 60 days).
-  const unitSeries = await q<{ root: string; day: string; total: string }>(
-    `SELECT system_root AS root, to_char(day, 'YYYY-MM-DD') AS day, sum(kev+critical+high+medium+low) AS total
-     FROM daily_snapshots WHERE host_id=$1 AND day > current_date - 60 GROUP BY system_root, day ORDER BY day`, [id]);
-  const seriesByRoot = new Map<string, number[]>();
-  for (const r of unitSeries) seriesByRoot.set(r.root, [...(seriesByRoot.get(r.root) ?? []), Number(r.total)]);
-  const osSeries = seriesByRoot.get('__os__');
+  // Per-unit (system_root) daily severity series — for the unit-card sparklines and their enlarge overlay.
+  const unitSeries = await q<{ root: string; day: string; kev: string; critical: string; high: string; medium: string; low: string }>(
+    `SELECT system_root AS root, to_char(day, 'YYYY-MM-DD') AS day, sum(kev) AS kev, sum(critical) AS critical, sum(high) AS high, sum(medium) AS medium, sum(low) AS low
+     FROM daily_snapshots WHERE host_id=$1 AND day > current_date - 90 GROUP BY system_root, day ORDER BY day`, [id]);
+  const seriesByRoot = new Map<string, TrendPoint[]>();
+  for (const r of unitSeries) seriesByRoot.set(r.root, [...(seriesByRoot.get(r.root) ?? []), { day: r.day, kev: Number(r.kev), critical: Number(r.critical), high: Number(r.high), medium: Number(r.medium), low: Number(r.low) }]);
+  const osTrend = seriesByRoot.get('__os__');
   // Audit trail: config pushes, updates and collect requests are logged as 'ops' change events (with
   // the admin's email). Surface them so distribution is accountable.
   const ops = await q<{ ts: Date; title: string }>("SELECT ts, title FROM change_events WHERE host_id=$1 AND kind='ops' ORDER BY ts DESC LIMIT 20", [id]);
@@ -147,11 +148,11 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">対応ユニット（直し方ごと）— プロンプトをコピーして実施 → 収集で確認</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <UnitCard icon="🧩" title="カーネル" sub="要再起動・計画実行" kev={Number(osK?.kev ?? 0)} crit={Number(osK?.crit ?? 0)} high={Number(osK?.hi ?? 0)} total={Number(osK?.total ?? 0)} href={osHref} spark={osSeries} />
-          <UnitCard icon="📦" title="カーネル以外のOS" sub="一括更新・サービス再起動のみ" kev={Number(osO?.kev ?? 0)} crit={Number(osO?.crit ?? 0)} high={Number(osO?.hi ?? 0)} total={Number(osO?.total ?? 0)} href={osHref} spark={osSeries} />
+          <UnitCard icon="🧩" title="カーネル" sub="要再起動・計画実行" kev={Number(osK?.kev ?? 0)} crit={Number(osK?.crit ?? 0)} high={Number(osK?.hi ?? 0)} total={Number(osK?.total ?? 0)} href={osHref} trend={osTrend} />
+          <UnitCard icon="📦" title="カーネル以外のOS" sub="一括更新・サービス再起動のみ" kev={Number(osO?.kev ?? 0)} crit={Number(osO?.crit ?? 0)} high={Number(osO?.hi ?? 0)} total={Number(osO?.total ?? 0)} href={osHref} trend={osTrend} />
           {registered.map((p) => (
             <UnitCard key={p.id} icon="🧪" title={p.name} sub={p.stack || 'プロジェクト環境'}
-              kev={Number(p.k)} crit={Number(p.c)} high={Number(p.hi)} total={Number(p.total)} href={`/systems/${p.id}`} spark={seriesByRoot.get(p.root)}
+              kev={Number(p.k)} crit={Number(p.c)} high={Number(p.hi)} total={Number(p.total)} href={`/systems/${p.id}`} trend={seriesByRoot.get(p.root)}
               badge={p.exposure === 'public' ? <span className="rounded bg-red-100 px-1.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span> : p.ignored ? <span className="rounded bg-slate-500 px-1.5 text-[11px] text-white">除外中</span> : undefined} />
           ))}
         </div>

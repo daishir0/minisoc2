@@ -1,5 +1,6 @@
 import Link from 'next/link';
-import { Timeline, TrendChart } from '@/components/Timeline';
+import { Timeline } from '@/components/Timeline';
+import { TrendChart } from '@/components/TrendChart';
 import { Card, Stat } from '@/components/ui';
 import { q } from '@/lib/db';
 import { getMail, getSetting } from '@/lib/settings';
