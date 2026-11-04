@@ -27,15 +27,27 @@ for (const uid of Object.keys(db)) {
   const rels = entry.releases || {};
   for (const rel of releases) {
     const r = rels[rel];
-    const sources = r?.sources;
-    if (!sources) continue;
+    if (!r) continue;
+    // sources: needed for kernel findings (matched via trackerCandidates to a source like linux-aws-6.8).
+    // allbinaries: every binary package (bind9-libs, libpcre2-8-0, ...) with its fixed version, so a
+    // non-kernel finding keyed by its binary name resolves directly. Versions carry the dpkg epoch.
+    const sources = r.sources || {};
+    const allbin = r.allbinaries || r.binaries || {};
     const relOut = out[rel];
     for (const cve of cves) {
       let m = relOut[cve];
       if (!m) { m = {}; relOut[cve] = m; }
       for (const [src, info] of Object.entries(sources)) {
         const v = info?.version;
-        if (v) m[src] = v; // last USN (highest/newest) wins when a source appears in several USNs
+        if (v) m[src] = v; // last USN (highest/newest) wins when a package appears in several USNs
+      }
+      for (const [bn, info] of Object.entries(allbin)) {
+        // Kernel binaries are matched via sources (trackerCandidates), and -dev/-doc/-dbg/-udeb
+        // packages are never OSV runtime findings — skip both to keep the map a fraction of its size.
+        if (/^linux-/.test(bn)) continue;
+        if (/-(dev|doc|dbg|dbgsym|source|udeb)$/.test(bn)) continue;
+        const v = typeof info === 'string' ? info : info?.version;
+        if (v) m[bn] = v;
       }
     }
   }
