@@ -7,7 +7,7 @@ import { q, q1 } from './db';
 import { atLeast, cvss3Score, fromScore, normalizeLabel, sevRank, type Severity } from './severity';
 import { getPolicy } from './settings';
 import { OS_SYSTEM } from './systems';
-import { compareVersions } from './version';
+import { compareDebian } from './version';
 
 const OSV = 'https://api.osv.dev/v1';
 const nul = (x: string) => x.replace(/\u0000/g, '').replace(/\\u0000/g, ''); // Postgres text/jsonb reject NUL
@@ -189,7 +189,7 @@ function dropKernelCvesCoveredByRunningKernel(running: string, out: Map<string, 
   for (const [k, c] of out) {
     if (!isKernelPackage(c.ecosystem, c.pkg)) continue;
     const fixes = [...c.fixed].filter(Boolean);
-    if (fixes.length && fixes.some((f) => compareVersions(rk, forVerCompare(f)) >= 0)) out.delete(k);
+    if (fixes.length && fixes.some((f) => compareDebian(rk, forVerCompare(f)) >= 0)) out.delete(k);
   }
 }
 

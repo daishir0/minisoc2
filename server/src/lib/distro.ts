@@ -2,7 +2,7 @@
 // distro trackers (Ubuntu USN / security tracker) map a CVE to package + fixed version within hours,
 // long before NVD finishes CPE analysis, and they cover OS/kernel packages that OSV/GHSA do not.
 // Currently Ubuntu (dpkg) is implemented — the gap vs RPM hosts, which already get dnf advisories.
-import { compareVersions } from './cvelookup';
+import { compareDebian } from './version';
 
 export const UBUNTU_CODENAME: Record<string, string> = {
   '16.04': 'xenial', '18.04': 'bionic', '20.04': 'focal', '22.04': 'jammy',
@@ -94,7 +94,7 @@ export function ubuntuVerdict(release: string, osPkgs: { name: string; version: 
         // kind==='vuln' = pending/needed/deferred: no released fix the host can apply right now.
         vulns.push({ pkg: ip.name, installed: ip.version, fixed: tp.fixed || '', pending: true });
       } else if (tp.fixed) {
-        const cmp = compareVersions(ip.version, tp.fixed);
+        const cmp = compareDebian(ip.version, tp.fixed);
         if (cmp < 0) { red.push(`Ubuntu勧告：${ip.name} ${ip.version} は修正版 ${tp.fixed} 未満＝脆弱（${cand}/${release}）`); vulns.push({ pkg: ip.name, installed: ip.version, fixed: tp.fixed, pending: false }); }
         else green.push(`Ubuntu勧告：${ip.name} ${ip.version} は修正版 ${tp.fixed} 以上＝適用済み（${cand}/${release}）`);
       }

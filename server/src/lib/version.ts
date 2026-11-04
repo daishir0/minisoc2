@@ -28,6 +28,49 @@ export function compareVersions(a: string, b: string): number {
 
 const major = (v: string) => v.trim().replace(/^v/i, '').split('.')[0];
 
+// Debian/Ubuntu (dpkg) version comparison. The generic compareVersions() above compares the part after
+// the first '-' lexically, which mis-orders kernel ABIs whose digit counts differ (e.g. it ranks
+// "6.8.0-1069.74" BELOW "6.8.0-45.45" because '1' < '4'). This implements dpkg's algorithm
+// (epoch : upstream - revision, with '~' sorting before everything and digit runs compared numerically)
+// so OS/kernel fixed-version checks are correct. Also fine for rpm "6.1.x-y.amzn2023" style strings.
+export function compareDebian(a: string, b: string): number {
+  const split = (v: string) => {
+    v = v.trim();
+    let epoch = 0, rest = v;
+    const ec = v.indexOf(':');
+    if (ec > 0 && /^\d+$/.test(v.slice(0, ec))) { epoch = parseInt(v.slice(0, ec), 10); rest = v.slice(ec + 1); }
+    const dash = rest.lastIndexOf('-');
+    return { epoch, up: dash >= 0 ? rest.slice(0, dash) : rest, rev: dash >= 0 ? rest.slice(dash + 1) : '0' };
+  };
+  const cmpNum = (x: string, y: string) => {
+    x = x.replace(/^0+/, '') || '0'; y = y.replace(/^0+/, '') || '0';
+    return x.length !== y.length ? (x.length < y.length ? -1 : 1) : (x < y ? -1 : x > y ? 1 : 0);
+  };
+  const ord = (c: string) => (c === '~' ? -1 : c === '' ? 0 : /[A-Za-z]/.test(c) ? c.charCodeAt(0) : c.charCodeAt(0) + 256);
+  const cmpPart = (x: string, y: string): number => {
+    let i = 0, j = 0;
+    while (i < x.length || j < y.length) {
+      while ((i < x.length && !/[0-9]/.test(x[i])) || (j < y.length && !/[0-9]/.test(y[j]))) {
+        const cx = i < x.length && !/[0-9]/.test(x[i]) ? x[i] : '';
+        const cy = j < y.length && !/[0-9]/.test(y[j]) ? y[j] : '';
+        const d = ord(cx) - ord(cy);
+        if (d) return d < 0 ? -1 : 1;
+        if (cx) i++;
+        if (cy) j++;
+      }
+      let dx = '', dy = '';
+      while (i < x.length && /[0-9]/.test(x[i])) dx += x[i++];
+      while (j < y.length && /[0-9]/.test(y[j])) dy += y[j++];
+      const d = cmpNum(dx, dy);
+      if (d) return d;
+    }
+    return 0;
+  };
+  const A = split(a), B = split(b);
+  if (A.epoch !== B.epoch) return A.epoch < B.epoch ? -1 : 1;
+  return cmpPart(A.up, B.up) || cmpPart(A.rev, B.rev);
+}
+
 // For ONE advisory (which may list fixes across several release branches), the version to recommend:
 // the smallest fix on the installed version's own major that is newer than what is installed. This
 // avoids telling a 16.x app to "fix" by moving to a 15.x patch. Falls back to the smallest forward

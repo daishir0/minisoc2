@@ -17,7 +17,8 @@ import { sendDigest } from '../src/lib/digest';
 import { NVD_DELAY_MS, nvdStep } from '../src/lib/nvd';
 import { getPolicy, getSetting, setSetting } from '../src/lib/settings';
 import { startWsHub } from './ws-hub';
-import { fetchUbuntuCve, ubuntuVerdict, UBUNTU_CODENAME } from '../src/lib/distro';
+import { ubuntuVerdict, UBUNTU_CODENAME } from '../src/lib/distro';
+import { getUsnMap, usnCveFor } from '../src/lib/usn';
 
 const PUBLIC_URL = (process.env.PUBLIC_URL ?? '').replace(/\/+$/, '');
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
@@ -119,7 +120,12 @@ async function watchCveAlerts() {
 // suppress those OSV false positives. Only "already fixed" is recorded; genuinely-vulnerable stay.
 async function syncUbuntuOs() {
   const hosts = await q<{ id: string; os_version: string }>("SELECT id, os_version FROM hosts WHERE os_id IN ('ubuntu','debian') AND NOT disabled AND baseline_done");
-  const cache = new Map<string, Awaited<ReturnType<typeof fetchUbuntuCve>>>();
+  if (!hosts.length) return;
+  // One cached USN DB (~45 MB, ~daily) covers every release/CVE for all hosts — replaces the old
+  // per-CVE ubuntu.com fetch, which was ~800 KB each and unreachable from some networks.
+  const codenames = [...new Set(hosts.map((h) => UBUNTU_CODENAME[h.os_version]).filter(Boolean))];
+  if (!codenames.length) return;
+  const usn = await getUsnMap(codenames);
   for (const h of hosts) {
     const codename = UBUNTU_CODENAME[h.os_version];
     if (!codename) continue;
@@ -131,8 +137,7 @@ async function syncUbuntuOs() {
     for (const f of findings) {
       const cve = f.vuln_id.replace(/^(UBUNTU|DEBIAN)-/, '');
       if (!/^CVE-\d{4}-\d+$/.test(cve)) continue;
-      if (!cache.has(cve)) { cache.set(cve, await fetchUbuntuCve(cve)); await new Promise((r) => setTimeout(r, 120)); }
-      const uc = cache.get(cve);
+      const uc = usnCveFor(usn, codename, cve);
       if (!uc) continue;
       const ver = f.version.split(',')[0].trim();
       const v = ubuntuVerdict(codename, [{ name: f.pkg, version: ver }], uc);
