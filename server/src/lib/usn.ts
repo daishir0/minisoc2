@@ -86,14 +86,17 @@ async function build(releases: string[]): Promise<UsnMap> {
 export async function getUsnMap(releases: string[]): Promise<UsnMap> {
   const fresh = cache && Date.now() - cache.at < REFRESH_MS;
   const covered = cache && releases.every((r) => cache!.map.has(r));
-  if (fresh && covered) return cache!.map;
+  const diag = (tag: string, m: UsnMap) => console.log(new Date().toISOString(), `usn.getUsnMap: ${tag} ${releases.map((r) => `${r}=${m.get(r)?.size ?? 0}`).join(' ')}${cache ? ` cacheAgeMin=${Math.round((Date.now() - cache.at) / 60000)}` : ' noCache'}`);
+  if (fresh && covered) { diag('cache-hit', cache!.map); return cache!.map; }
   if (inflight) return inflight;
   inflight = (async () => {
     try {
       const map = await build([...new Set(releases)]);
       cache = { at: Date.now(), map };
+      diag('built', map);
       return map;
     } catch (e) {
+      console.log(new Date().toISOString(), `usn.getUsnMap: build failed (${e instanceof Error ? e.message : e}) — ${cache ? 'keeping cache' : 'returning empty'}`);
       if (cache) return cache.map; // keep stale data over nothing
       return new Map();
     } finally {

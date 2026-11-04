@@ -126,6 +126,7 @@ async function syncUbuntuOs() {
   const codenames = [...new Set(hosts.map((h) => UBUNTU_CODENAME[h.os_version]).filter(Boolean))];
   if (!codenames.length) return;
   const usn = await getUsnMap(codenames);
+  log(`syncUbuntuOs: usn map sizes ${codenames.map((c) => `${c}=${usn.get(c)?.size ?? 0}`).join(' ')}`); // diag: catch the source of host_os_fixed oscillation
   // If the USN DB could not be fetched/parsed this pass (intermittent network), skip entirely:
   // rebuilding host_os_fixed from an empty map would WIPE valid suppressions and reopen already-handled
   // findings. Keep the previous state and try again next pass.
