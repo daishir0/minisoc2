@@ -7,6 +7,7 @@ import { q, q1 } from './db';
 import { atLeast, cvss3Score, fromScore, normalizeLabel, sevRank, type Severity } from './severity';
 import { getPolicy } from './settings';
 import { OS_SYSTEM } from './systems';
+import { compareVersions } from './version';
 
 const OSV = 'https://api.osv.dev/v1';
 const nul = (x: string) => x.replace(/\u0000/g, '').replace(/\\u0000/g, ''); // Postgres text/jsonb reject NUL
@@ -143,6 +144,55 @@ function preferCve(id: string, aliases: string[]): string {
   return [id, ...aliases].find((a) => /^CVE-\d{4}-\d+$/.test(a)) ?? id;
 }
 
+// A kernel package is one whose CVE is only exploitable through the kernel the host is actually
+// RUNNING. Older kernel packages often stay installed as boot fallback; those are not the running
+// code. Covers dpkg (Ubuntu/Debian) versioned images/modules/headers/tools, their flavour meta
+// packages, and linux-base; and rpm (dnf) kernel* packages. Flavour-agnostic, no host-specific names.
+function isKernelPackage(ecosystem: string, name: string): boolean {
+  const n = name.toLowerCase();
+  if (ecosystem === 'rpm') return n === 'kernel' || /^kernel-/.test(n);
+  if (n === 'linux-base') return true;
+  // versioned kernel packages carry an ABI like "6.8.0-1069"
+  if (/^linux-(image|image-unsigned|modules|modules-extra|headers|tools|cloud-tools|buildinfo)-\d+\.\d+\.\d+-\d+/.test(n)) return true;
+  // flavour meta packages: linux-<flavour>, linux-image-<flavour>, linux-headers-<flavour>, linux-tools-<flavour>
+  if (/^linux(-image|-image-unsigned|-headers|-tools|-cloud-tools|-modules)?-(aws|generic|gcp|azure|kvm|oracle|lowlatency|virtual|raspi|gke|ibm|intel|realtime|lts-[a-z]+|hwe-[0-9.]+)(-edge|-[0-9.]+)?$/.test(n)) return true;
+  return false;
+}
+
+// Strip an rpm epoch ("1:") and a uname/arch suffix so a running kernel version compares cleanly
+// against an advisory's fixed version with compareVersions().
+const forVerCompare = (v: string) => v.trim().replace(/^\d+:/, '').replace(/\.(x86_64|aarch64|arm64|armv7l|noarch|i[36]86)$/, '');
+
+// The version of the kernel the host is RUNNING, from hosts.kernel (uname) mapped to the installed
+// package: dpkg "linux-image-<uname>", or the rpm "kernel" whose version matches the booted release.
+// Returns null when it cannot be determined (then the caller leaves findings untouched = safe default).
+async function runningKernelVersion(hostId: string): Promise<string | null> {
+  const h = await q1<{ kernel: string | null }>('SELECT kernel FROM hosts WHERE id=$1', [hostId]);
+  const uname = h?.kernel?.trim();
+  if (!uname) return null;
+  const deb = await q1<{ version: string }>(
+    "SELECT version FROM host_packages WHERE host_id=$1 AND name IN ($2, $3) ORDER BY name LIMIT 1",
+    [hostId, `linux-image-${uname}`, `linux-image-unsigned-${uname}`],
+  );
+  if (deb?.version) return deb.version;
+  const unameNoArch = forVerCompare(uname);
+  const rpms = await q<{ version: string }>("SELECT version FROM host_packages WHERE host_id=$1 AND ecosystem='rpm' AND name='kernel'", [hostId]);
+  const match = rpms.find((r) => forVerCompare(r.version) === unameNoArch);
+  return match?.version ?? null;
+}
+
+// Running-kernel awareness: a kernel CVE is remediated once the host RUNS a fixed kernel, even if an
+// older vulnerable kernel package is still installed (boot fallback). Drop such kernel candidates so
+// they resolve; non-kernel packages and not-yet-fixed kernels (running < fixed) are left untouched.
+function dropKernelCvesCoveredByRunningKernel(running: string, out: Map<string, Candidate>): void {
+  const rk = forVerCompare(running);
+  for (const [k, c] of out) {
+    if (!isKernelPackage(c.ecosystem, c.pkg)) continue;
+    const fixes = [...c.fixed].filter(Boolean);
+    if (fixes.length && fixes.some((f) => compareVersions(rk, forVerCompare(f)) >= 0)) out.delete(k);
+  }
+}
+
 async function candidates(hostId: string): Promise<Map<string, Candidate>> {
   const out = new Map<string, Candidate>();
   // packages that only appear in systems marked "ignored" produce no findings
@@ -206,6 +256,8 @@ async function candidates(hostId: string): Promise<Map<string, Candidate>> {
   // Distro-tracker confirmed OS vulns (Ubuntu/Debian) not in OSV — standing findings on __os__.
   const distro = await q<{ vuln_id: string; pkg: string; installed: string; fixed: string }>('SELECT vuln_id, pkg, installed, fixed FROM host_distro_cves WHERE host_id=$1', [hostId]);
   for (const r of distro) add({ vulnId: r.vuln_id, ecosystem: 'os', pkg: r.pkg, version: r.installed, fixed: r.fixed ? [r.fixed] : [], severity: 'high', source: 'os-advisory', systems: ['__os__'] });
+  const running = await runningKernelVersion(hostId);
+  if (running) dropKernelCvesCoveredByRunningKernel(running, out);
   return out;
 }
 
