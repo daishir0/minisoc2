@@ -2,12 +2,29 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState } from 'react';
+import { useMask } from '@/components/Mask';
+import { pseudo } from '@/lib/mask';
 
 type Item = { type: string; label: string; sub: string; href: string };
+
+// Demo masking for search results: hosts/systems and the host list on a package hit carry identity, so
+// swap in the same pseudonyms used across the UI. CVE ids and package names are not masked.
+function maskItem(it: Item): Item {
+  if (it.type === 'ホスト') return { ...it, label: pseudo('host', it.label) };
+  if (it.type === 'システム') return { ...it, label: pseudo('system', it.label), sub: it.sub ? pseudo('host', it.sub) : it.sub };
+  if (it.type === 'パッケージ') {
+    const [eco, ...rest] = it.sub.split('・');
+    if (!rest.length) return it;
+    const hosts = rest.join('・').split('、').map((h) => pseudo('host', h)).join('、');
+    return { ...it, sub: `${eco}・${hosts}` };
+  }
+  return it;
+}
 
 // Header search for CVEs, hosts, systems and packages. "/" focuses it on desktop.
 export function GlobalSearch({ compact }: { compact?: boolean }) {
   const router = useRouter();
+  const masked = useMask();
   const [q, setQ] = useState('');
   const [items, setItems] = useState<Item[]>([]);
   const [open, setOpen] = useState(false);
@@ -75,7 +92,7 @@ export function GlobalSearch({ compact }: { compact?: boolean }) {
             <p className="px-3 py-2 text-sm text-muted">見つかりません。CVE は CVE-2026-12345 の形で入力すると外部の情報も照会できます。</p>
           ) : (
             <ul>
-              {items.map((it, i) => (
+              {items.map((raw, i) => { const it = masked ? maskItem(raw) : raw; return (
                 <li key={it.type + it.href}>
                   <button type="button" onMouseDown={() => go(it.href)} className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm ${i === sel ? 'bg-bg' : ''}`}>
                     <span className="w-16 shrink-0 text-[11px] text-muted">{it.type}</span>
@@ -83,7 +100,7 @@ export function GlobalSearch({ compact }: { compact?: boolean }) {
                     {it.sub && <span className="ml-auto truncate pl-2 text-xs text-muted">{it.sub}</span>}
                   </button>
                 </li>
-              ))}
+              ); })}
             </ul>
           )}
         </div>

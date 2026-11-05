@@ -1,6 +1,7 @@
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
+import { MaskFree } from '@/components/Mask';
 import { Card, Sev, ago } from '@/components/ui';
 import { q } from '@/lib/db';
 import { alertFormAction } from '../actions';
@@ -44,8 +45,8 @@ export default async function AlertsPage({ searchParams }: { searchParams: Promi
               <div className="flex min-w-0 flex-1 gap-3">
               <Sev s={a.severity} />
               <div className="min-w-0 flex-1 break-words">
-                <div className="text-sm">{a.title}</div>
-                {a.detail && <pre className="mt-1 whitespace-pre-wrap text-xs text-muted">{a.detail}</pre>}
+                <div className="text-sm"><MaskFree>{a.title}</MaskFree></div>
+                {a.detail && <pre className="mt-1 whitespace-pre-wrap text-xs text-muted"><MaskFree>{a.detail}</MaskFree></pre>}
                 <div className="mt-1 text-xs text-muted">
                   {KIND[a.kind] ?? a.kind} · {ago(a.created_at)} · {a.notified_at ? (a.notify_error ? `メール送信なし（${MAIL_NOTE[a.notify_error] ?? a.notify_error}）` : 'メール送信済み') : a.notify_error ? `メール送信失敗：${a.notify_error}` : 'メール送信待ち'}
                   {a.host_id && <> · <Link className="text-accent" href={`/hosts/${a.host_id}`}>ホスト</Link></>}

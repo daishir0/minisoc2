@@ -2,6 +2,7 @@ import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Timeline } from '@/components/Timeline';
+import { Masked } from '@/components/Mask';
 import { Card } from '@/components/ui';
 import { q } from '@/lib/db';
 import { timeline } from '@/lib/timeline';
@@ -26,7 +27,7 @@ export default async function ChangesPage({ searchParams }: { searchParams: Prom
     <Card title="変化の履歴">
       <form className="mb-4 grid grid-cols-2 gap-2 text-sm sm:flex sm:flex-wrap" action="/changes">
         <select name="days" defaultValue={String(days)} className="input sm:w-auto">{[7, 30, 90, 180].map((d) => <option key={d} value={d}>{d}日</option>)}</select>
-        <select name="host" defaultValue={hostId ?? ''} className="input sm:w-auto"><option value="">全ホスト</option>{hosts.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select>
+        <select name="host" defaultValue={hostId ?? ''} className="input sm:w-auto"><option value="">全ホスト</option>{hosts.map((h) => <option key={h.id} value={h.id}><Masked kind="host">{h.name}</Masked></option>)}</select>
         <select name="kind" defaultValue={kind ?? ''} className="input sm:w-auto">{KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
         <label className="flex items-center gap-1"><input type="checkbox" name="all" value="1" defaultChecked={all} /> 高以下・運用の記録も表示</label>
         <button className="btn">表示</button>

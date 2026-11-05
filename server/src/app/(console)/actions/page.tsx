@@ -1,5 +1,6 @@
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
+import { Masked, MaskFree } from '@/components/Mask';
 import { Card, ago } from '@/components/ui';
 import { q } from '@/lib/db';
 import { EXPOSURE } from '@/lib/systemmeta';
@@ -44,9 +45,9 @@ export default async function ActionsPage({ searchParams }: { searchParams: Prom
                 <Link href={`/actions/${t.key}`} className="block">
                   <div className="flex flex-wrap items-center gap-2">
                     <span>{t.kev ? '🔴' : '🟠'}</span>
-                    <span className="font-medium text-accent">{t.root === '__os__' ? `${t.host} OS` : `${t.host}／${t.name}`}</span>
+                    <span className="font-medium text-accent"><Masked kind="host">{t.host}</Masked>{t.root === '__os__' ? ' OS' : <>／<Masked kind="system">{t.name}</Masked></>}</span>
                     {t.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}
-                    {t.status !== 'todo' && <span className={`rounded px-1.5 py-0.5 text-[11px] ${t.overdue ? 'bg-red-600 text-white' : 'bg-bg text-muted'}`}>{t.overdue ? '保留の期限切れ' : STATUS[t.status]}{t.owner ? `・${t.owner}` : ''}{t.due && !t.overdue ? `・${t.due}まで` : ''}</span>}
+                    {t.status !== 'todo' && <span className={`rounded px-1.5 py-0.5 text-[11px] ${t.overdue ? 'bg-red-600 text-white' : 'bg-bg text-muted'}`}>{t.overdue ? '保留の期限切れ' : STATUS[t.status]}{t.owner ? <>・<Masked kind="generic">{t.owner}</Masked></> : ''}{t.due && !t.overdue ? `・${t.due}まで` : ''}</span>}
                   </div>
                   <div className="mt-1 break-words pl-7 text-sm">
                     {t.packages.slice(0, 4).map((p) => (t.root === '__os__' ? p.name.replace(/^(kernel)[\w-]*$/, '$1') : `${p.name}${p.target ? ` → ${p.target}` : ''}`)).filter((v, i, a) => a.indexOf(v) === i).join('、')}
@@ -57,7 +58,7 @@ export default async function ActionsPage({ searchParams }: { searchParams: Prom
                   </div>
                   {t.protects.length > 0 && (
                     <div className="mt-0.5 break-words pl-7 text-xs text-muted">
-                      守る：{t.protects.slice(0, 4).map((p) => p.name).join('、')}{t.protects.length > 4 ? ` ほか${t.protects.length - 4}` : ''}
+                      守る：{t.protects.slice(0, 4).map((p, i) => <span key={i}>{i > 0 ? '、' : ''}{p.systemId ? <Masked kind="system">{p.name}</Masked> : p.name}</span>)}{t.protects.length > 4 ? ` ほか${t.protects.length - 4}` : ''}
                     </div>
                   )}
                 </Link>
@@ -71,7 +72,7 @@ export default async function ActionsPage({ searchParams }: { searchParams: Prom
         <Card title={`除外の見直し（期限到来 ${reviews.length}件）`}>
           <ul className="divide-y divide-line text-sm">
             {reviews.map((r) => (
-              <li key={r.id} className="py-2"><Link href={`/systems/${r.system_id}`} className="text-accent">{r.host}／{r.name}</Link>：<span className="font-mono">{r.pattern}</span><span className="ml-2 text-xs text-muted">期限 {r.review}</span></li>
+              <li key={r.id} className="py-2"><Link href={`/systems/${r.system_id}`} className="text-accent"><Masked kind="host">{r.host}</Masked>／<Masked kind="system">{r.name}</Masked></Link>：<span className="font-mono">{r.pattern}</span><span className="ml-2 text-xs text-muted">期限 {r.review}</span></li>
             ))}
           </ul>
         </Card>
@@ -85,14 +86,14 @@ export default async function ActionsPage({ searchParams }: { searchParams: Prom
               return (
                 <li key={d.id} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center">
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm"><span className="mr-1">⚠</span>{d.title}</div>
-                    <div className="text-xs text-muted">{ago(d.created_at)}{d.detail ? ` · ${d.detail.split('\n')[0].slice(0, 120)}` : ''}</div>
+                    <div className="text-sm"><span className="mr-1">⚠</span><MaskFree>{d.title}</MaskFree></div>
+                    <div className="text-xs text-muted">{ago(d.created_at)}{d.detail ? <> · <MaskFree>{d.detail.split('\n')[0].slice(0, 120)}</MaskFree></> : ''}</div>
                   </div>
                   <div className="flex flex-wrap gap-2 pl-6 sm:pl-0">
                     {ip && (
                       <form action={trustIp}>
                         <input type="hidden" name="id" value={d.id} /><input type="hidden" name="ip" value={ip} />
-                        <button className="btn-ghost" title="このIPを既知として登録し、今後は通知しません">自分です（{ip}）</button>
+                        <button className="btn-ghost" title="このIPを既知として登録し、今後は通知しません">自分です（<Masked kind="addr">{ip}</Masked>）</button>
                       </form>
                     )}
                     <form action={ackDetection}><input type="hidden" name="id" value={d.id} /><button className="btn-ghost">確認済み</button></form>

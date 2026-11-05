@@ -1,15 +1,21 @@
 import Link from 'next/link';
+import { Masked } from '@/components/Mask';
+import type { MaskKind } from '@/lib/mask';
 
-// Clickable breadcrumb trail. The last item is the current page (no link).
-export function Breadcrumbs({ items }: { items: { label: string; href?: string }[] }) {
+// Clickable breadcrumb trail. The last item is the current page (no link). `mask` demo-masks a dynamic
+// label (host / system name) with the shared pseudonyms.
+export function Breadcrumbs({ items }: { items: { label: string; href?: string; mask?: MaskKind }[] }) {
   return (
     <nav aria-label="パンくず" className="flex flex-wrap items-center gap-1 text-xs text-muted">
-      {items.map((it, i) => (
-        <span key={i} className="flex items-center gap-1">
-          {it.href ? <Link href={it.href} className="hover:text-accent hover:underline">{it.label}</Link> : <span className="text-fg">{it.label}</span>}
-          {i < items.length - 1 && <span aria-hidden="true" className="opacity-50">›</span>}
-        </span>
-      ))}
+      {items.map((it, i) => {
+        const content = it.mask ? <Masked kind={it.mask}>{it.label}</Masked> : it.label;
+        return (
+          <span key={i} className="flex items-center gap-1">
+            {it.href ? <Link href={it.href} className="hover:text-accent hover:underline">{content}</Link> : <span className="text-fg">{content}</span>}
+            {i < items.length - 1 && <span aria-hidden="true" className="opacity-50">›</span>}
+          </span>
+        );
+      })}
     </nav>
   );
 }

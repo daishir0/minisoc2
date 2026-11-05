@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { Masked, MaskFree } from '@/components/Mask';
 import { Timeline } from '@/components/Timeline';
 import { TrendChart } from '@/components/TrendChart';
 import { Card, Stat } from '@/components/ui';
@@ -72,17 +73,17 @@ export default async function Home() {
         <Card title="今日やる（優先度順：KEV → 公開露出 → 緊急）" right={<Link href="/actions" className="text-xs text-accent">すべての対応へ</Link>}>
           <ul className="divide-y divide-line">
             {det.map((d) => (
-              <li key={d.id} className="py-2 text-sm"><Link href="/actions" className="block"><span className="mr-1">⚠</span>{d.title}</Link></li>
+              <li key={d.id} className="py-2 text-sm"><Link href="/actions" className="block"><span className="mr-1">⚠</span><MaskFree>{d.title}</MaskFree></Link></li>
             ))}
             {tasks.slice(0, 3).map((x) => (
               <li key={x.key} className="py-2">
                 <Link href={`/actions/${x.key}`} className="flex flex-wrap items-center gap-2">
                   <span className={`rounded px-1.5 py-0.5 text-[10px] ${x.bucket === 'act' ? 'bg-red-600 text-white' : x.bucket === 'attend' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{BUCKET_LABEL[x.bucket]}</span>
-                  <span className="font-medium text-accent">{x.root === '__os__' ? `${x.host} OS` : `${x.host}／${x.name}`}</span>
+                  <span className="font-medium text-accent"><Masked kind="host">{x.host}</Masked>{x.root === '__os__' ? ' OS' : <>／<Masked kind="system">{x.name}</Masked></>}</span>
                   {x.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}
                   {x.epss != null && <span className="text-[11px] text-muted">EPSS {Math.round(x.epss * 100)}%</span>}
                   <span className="ml-auto text-sm">{x.kev ? <b className="text-red-600">KEV {x.kev}</b> : null}{x.kev && x.critical ? '・' : ''}{x.critical ? <span className="text-orange-600">緊急 {x.critical}</span> : null}</span>
-                  {x.protects.length > 0 && <span className="w-full break-words pl-7 text-xs text-muted">守る：{x.protects.slice(0, 3).map((p) => p.name).join('、')}{x.protects.length > 3 ? ` ほか${x.protects.length - 3}` : ''}</span>}
+                  {x.protects.length > 0 && <span className="w-full break-words pl-7 text-xs text-muted">守る：{x.protects.slice(0, 3).map((p, i) => <span key={i}>{i > 0 ? '、' : ''}{p.systemId ? <Masked kind="system">{p.name}</Masked> : p.name}</span>)}{x.protects.length > 3 ? ` ほか${x.protects.length - 3}` : ''}</span>}
                 </Link>
               </li>
             ))}

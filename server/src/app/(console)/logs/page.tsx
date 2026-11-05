@@ -1,6 +1,7 @@
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
+import { Masked, MaskFree } from '@/components/Mask';
 import { Card, ago } from '@/components/ui';
 import { q } from '@/lib/db';
 import { rawIngestPaused } from '@/lib/logs';
@@ -60,7 +61,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
       <form className="grid grid-cols-2 gap-2 text-sm sm:flex sm:flex-wrap" action="/logs">
         <select name="host" defaultValue={hostOk ?? ''} className="input sm:w-auto">
           <option value="">全ホスト</option>
-          {hosts.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}
+          {hosts.map((h) => <option key={h.id} value={h.id}><Masked kind="host">{h.name}</Masked></option>)}
         </select>
         <select name="source" defaultValue={sp.source ?? ''} className="input sm:w-auto sm:max-w-xs">
           <option value="">全ソース</option>
@@ -103,9 +104,9 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
             {lines.map((l, i) => (
               <div key={i} className="flex flex-wrap gap-x-3 border-b border-line py-1 sm:flex-nowrap">
                 <span className="whitespace-nowrap text-muted" title={new Date(l.received_at).toLocaleString('ja-JP')}>{l.ts ? new Date(l.ts).toLocaleString('ja-JP') : ago(l.received_at)}</span>
-                <span className="whitespace-nowrap text-muted">{l.host}</span>
+                <span className="whitespace-nowrap text-muted"><Masked kind="host">{l.host}</Masked></span>
                 <Link href={`/logs?source=${encodeURIComponent(l.source)}${hostOk ? `&host=${hostOk}` : ''}`} className="max-w-[14rem] truncate whitespace-nowrap text-accent">{l.source}</Link>
-                <span className="w-full min-w-0 break-all sm:w-auto sm:flex-1">{l.message}</span>
+                <span className="w-full min-w-0 break-all sm:w-auto sm:flex-1"><MaskFree>{l.message}</MaskFree></span>
               </div>
             ))}
           </div>

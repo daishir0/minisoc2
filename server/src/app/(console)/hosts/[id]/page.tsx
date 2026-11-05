@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 import { notFound } from 'next/navigation';
+import { Masked, MaskFree } from '@/components/Mask';
 import { Card, Sev, ago } from '@/components/ui';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q, q1 } from '@/lib/db';
@@ -18,8 +19,8 @@ import { join } from 'node:path';
 
 // One remediation unit (kernel / non-kernel OS / a project env). This is the core repeated card of the
 // host screen: status at a glance + one click into its remediation prompt. Kept generic (no host-specifics).
-function UnitCard({ icon, title, sub, kev, crit, high, total, href, badge, trend }: {
-  icon: string; title: string; sub?: string; kev: number; crit: number; high: number; total: number; href: string; badge?: ReactNode; trend?: TrendPoint[];
+function UnitCard({ icon, title, sparkTitle, sub, kev, crit, high, total, href, badge, trend }: {
+  icon: string; title: ReactNode; sparkTitle?: string; sub?: string; kev: number; crit: number; high: number; total: number; href: string; badge?: ReactNode; trend?: TrendPoint[];
 }) {
   const spark = trend?.map((p) => p.kev + p.critical + p.high + p.medium + p.low);
   const tone = kev > 0 || crit > 0 ? 'border-l-red-500' : high > 0 ? 'border-l-orange-400' : total > 0 ? 'border-l-yellow-400' : 'border-l-green-500';
@@ -40,7 +41,7 @@ function UnitCard({ icon, title, sub, kev, crit, high, total, href, badge, trend
             <span className="text-muted">計 {total}</span>
           </>
         ) : <span className="font-medium text-green-600">対処不要（未対応なし）</span>}
-        {spark && spark.length > 1 && trend && <span className="ml-auto" title="クリックで拡大（日次の件数を表示）"><SparkLine values={spark} detail={{ points: trend, title: `${title} の推移` }} /></span>}
+        {spark && spark.length > 1 && trend && <span className="ml-auto" title="クリックで拡大（日次の件数を表示）"><SparkLine values={spark} detail={{ points: trend, title: `${sparkTitle ?? 'このユニット'} の推移` }} /></span>}
       </div>
       <div className="mt-auto pt-1">
         <Link href={href} className={total > 0 ? 'btn text-xs' : 'btn-ghost text-xs'}>{total > 0 ? '対応する →' : '詳細 →'}</Link>
@@ -128,9 +129,9 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
 
   return (
     <>
-      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, CRUMB.hosts, { label: h.name }]} />
+      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, CRUMB.hosts, { label: h.name, mask: 'host' }]} />
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">{h.name}</h1>
+        <h1 className="text-xl font-semibold"><Masked kind="host">{h.name}</Masked></h1>
         {h.kind === 'pull' && <span className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white">プル型（SSH）</span>}
         {h.kind !== 'pull' && (
           <span className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs ${wsOnline ? 'bg-green-100 text-green-700 dark:bg-green-950 dark:text-green-200' : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`} title="制御チャネル（リアルタイム収集）の接続状態">
@@ -148,10 +149,10 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       <section className="space-y-3">
         <h2 className="text-sm font-semibold">対応ユニット（直し方ごと）— プロンプトをコピーして実施 → 収集で確認</h2>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          <UnitCard icon="🧩" title="カーネル" sub="要再起動・計画実行" kev={Number(osK?.kev ?? 0)} crit={Number(osK?.crit ?? 0)} high={Number(osK?.hi ?? 0)} total={Number(osK?.total ?? 0)} href={osHref} trend={osTrend} />
-          <UnitCard icon="📦" title="カーネル以外のOS" sub="一括更新・サービス再起動のみ" kev={Number(osO?.kev ?? 0)} crit={Number(osO?.crit ?? 0)} high={Number(osO?.hi ?? 0)} total={Number(osO?.total ?? 0)} href={osHref} trend={osTrend} />
+          <UnitCard icon="🧩" title="カーネル" sparkTitle="カーネル" sub="要再起動・計画実行" kev={Number(osK?.kev ?? 0)} crit={Number(osK?.crit ?? 0)} high={Number(osK?.hi ?? 0)} total={Number(osK?.total ?? 0)} href={osHref} trend={osTrend} />
+          <UnitCard icon="📦" title="カーネル以外のOS" sparkTitle="カーネル以外のOS" sub="一括更新・サービス再起動のみ" kev={Number(osO?.kev ?? 0)} crit={Number(osO?.crit ?? 0)} high={Number(osO?.hi ?? 0)} total={Number(osO?.total ?? 0)} href={osHref} trend={osTrend} />
           {registered.map((p) => (
-            <UnitCard key={p.id} icon="🧪" title={p.name} sub={p.stack || 'プロジェクト環境'}
+            <UnitCard key={p.id} icon="🧪" title={<Masked kind="system">{p.name}</Masked>} sub={p.stack || 'プロジェクト環境'}
               kev={Number(p.k)} crit={Number(p.c)} high={Number(p.hi)} total={Number(p.total)} href={`/systems/${p.id}`} trend={seriesByRoot.get(p.root)}
               badge={p.exposure === 'public' ? <span className="rounded bg-red-100 px-1.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span> : p.ignored ? <span className="rounded bg-slate-500 px-1.5 text-[11px] text-white">除外中</span> : undefined} />
           ))}
@@ -170,7 +171,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       <div className="grid gap-6 lg:grid-cols-3">
         <Card title="ホスト情報">
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-            <dt className="text-muted">ホスト名</dt><dd className="break-all">{h.hostname}</dd>
+            <dt className="text-muted">ホスト名</dt><dd className="break-all"><Masked kind="addr">{h.hostname}</Masked></dd>
             <dt className="text-muted">OS</dt><dd>{h.os_name} {h.os_version} ({h.arch})</dd>
             <dt className="text-muted">カーネル</dt><dd className="break-all">{h.kernel}</dd>
             <dt className="text-muted">エージェント</dt><dd>{h.agent_version}</dd>
@@ -241,13 +242,13 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
             {registered.map((p) => (
               <li key={p.id} className="flex flex-col gap-1 py-1.5 sm:flex-row sm:items-center sm:gap-2">
                 <span className="flex min-w-0 flex-wrap items-center gap-1.5">
-                  <Link href={`/systems/${p.id}`} className="font-medium text-accent">{p.name}</Link>
+                  <Link href={`/systems/${p.id}`} className="font-medium text-accent"><Masked kind="system">{p.name}</Masked></Link>
                   {p.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}
                   {p.exposure !== 'public' && p.exposure !== 'unknown' && <span className="rounded bg-bg px-1.5 text-[11px] text-muted">{EXPOSURE[p.exposure]}</span>}
                   {p.criticality !== 'normal' && <span className="rounded bg-bg px-1.5 text-[11px] text-muted">{CRITICALITY[p.criticality]}</span>}
                   {p.stack && <span className="rounded bg-bg px-1.5 text-[11px] text-muted">{p.stack}</span>}
                   {p.ignored && <span className="rounded bg-slate-500 px-1.5 text-[11px] text-white">除外中</span>}
-                  <span className="hidden font-mono text-xs text-muted md:inline">{p.root}</span>
+                  <span className="hidden font-mono text-xs text-muted md:inline"><Masked kind="path">{p.root}</Masked></span>
                 </span>
                 <span className="ml-auto flex shrink-0 items-center gap-3 text-xs">
                   <span className="text-muted">pkg {p.pkgs}</span>
@@ -266,8 +267,8 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           <ul className="divide-y divide-border text-sm">
             {candidates.map((p) => (
               <li key={p.id} className="flex flex-wrap items-center gap-2 py-1.5">
-                <span className="font-medium">{p.name}</span>
-                <span className="font-mono text-xs text-muted">{p.root}</span>
+                <span className="font-medium"><Masked kind="system">{p.name}</Masked></span>
+                <span className="font-mono text-xs text-muted"><Masked kind="path">{p.root}</Masked></span>
                 <span className="ml-auto text-xs text-muted">{p.pkgs} パッケージ</span>
                 <Link href={`/systems/${p.id}`} className="btn-ghost">詳細</Link>
                 <form action={registerSystem}><input type="hidden" name="id" value={p.id} /><PendingButton className="btn" pendingText="登録中…">登録</PendingButton></form>
@@ -282,7 +283,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
             このホストはエージェントを置けないため、サーバーから<b>読み取り専用SSH</b>で定期的に収集しています。ここは<b>接続先と最終結果</b>の確認用です（収集の手動実行は上の「プロジェクト」欄の「🔄 再スキャン」から）。
           </p>
           <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
-            <dt className="text-muted">接続先</dt><dd className="font-mono">{pull.ssh_user}@{pull.ssh_host}:{pull.ssh_port}（{pull.auth === 'key' ? '鍵' : 'パスワード'}）</dd>
+            <dt className="text-muted">接続先</dt><dd className="font-mono"><Masked kind="generic">{pull.ssh_user}</Masked>@<Masked kind="addr">{pull.ssh_host}</Masked>:{pull.ssh_port}（{pull.auth === 'key' ? '鍵' : 'パスワード'}）</dd>
             <dt className="text-muted">収集間隔</dt><dd>{pull.every_hours} 時間ごと</dd>
             <dt className="text-muted">最終収集</dt><dd>{ago(pull.last_poll_at)}</dd>
             <dt className="text-muted">状態</dt><dd>{pull.last_error ? <span className="text-red-600">エラー</span> : <span className="text-green-600">正常</span>}</dd>
@@ -313,7 +314,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
             {ops.map((o, i) => (
               <li key={i} className="flex flex-wrap items-center gap-2 py-1.5">
                 <span className="whitespace-nowrap font-mono text-xs text-muted">{new Date(o.ts).toLocaleString('ja-JP')}</span>
-                <span>{o.title}</span>
+                <span><MaskFree>{o.title}</MaskFree></span>
               </li>
             ))}
           </ul>
@@ -336,7 +337,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
                 {fileChanges.map((e, i) => (
                   <li key={i} className="flex items-center gap-2 py-1.5">
                     {e.important && <span className="rounded bg-red-600 px-1.5 text-xs text-white">重要</span>}
-                    <span className="min-w-0 flex-1 truncate">{e.title}</span>
+                    <span className="min-w-0 flex-1 truncate"><MaskFree>{e.title}</MaskFree></span>
                     <span className="whitespace-nowrap text-xs text-muted">{ago(e.created_at)}</span>
                   </li>
                 ))}
@@ -363,10 +364,10 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           <p className="mb-2 text-xs text-muted">このホストで外部からの接続を待ち受けているポートです。身に覚えのないポートは侵入やバックドアの兆候になります。</p>
           <div className="max-h-72 overflow-y-auto">
             <table className="tbl"><thead><tr><th>プロトコル</th><th>アドレス</th><th>ポート</th></tr></thead><tbody>
-              {ports.map((p) => <tr key={`${p.proto}${p.addr}${p.port}`}><td>{p.proto}</td><td className="font-mono text-xs">{p.addr}</td><td>{p.port}</td></tr>)}
+              {ports.map((p) => <tr key={`${p.proto}${p.addr}${p.port}`}><td>{p.proto}</td><td className="font-mono text-xs">{['0.0.0.0', '127.0.0.1', '::', '::1', '*', '[::]'].includes(p.addr) ? p.addr : <Masked kind="addr">{p.addr}</Masked>}</td><td>{p.port}</td></tr>)}
             </tbody></table>
           </div>
-          <p className="mt-2 text-xs text-muted">ログイン可能なアカウント： {(h.state.users ?? []).join(', ') || '-'}</p>
+          <p className="mt-2 text-xs text-muted">ログイン可能なアカウント： {(h.state.users ?? []).length ? <Masked kind="generic">{(h.state.users ?? []).join(', ')}</Masked> : '-'}</p>
         </Card>
         )}
         <Card title={pull ? '収集の履歴' : '直近の報告'}>

@@ -4,6 +4,8 @@ import { useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { bestFixTarget, recommendedTarget } from '@/lib/version';
 import { suppressSelected } from '@/app/(console)/actions';
+import { useMask } from '@/components/Mask';
+import { pseudo } from '@/lib/mask';
 
 // Plain-language reasons, mapped to CycloneDX VEX justifications. Covers the common cases without the
 // jargon; "迷ったら①" is the safe default for unused / build-only dependencies.
@@ -228,7 +230,23 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   ].join('\n');
   const prompt = bulk ? osBulkPrompt : isOs ? osPrompt : appPrompt;
 
+  // Demo masking: the prompt embeds the real host name, address, host id, project name and path (on
+  // purpose — it's run on that exact host). For a screen-shared demo, replace those identity tokens with
+  // the same pseudonyms used everywhere else so the structure/CVEs stay visible but nothing identifying
+  // leaks. Copy is blocked while masked (a pseudonymised prompt must never be run on a host).
+  const masked = useMask();
+  const idPairs: [string, string][] = [
+    [host, pseudo('host', host)],
+    [address, pseudo('addr', address)],
+    [system, pseudo('system', system)],
+    [path, pseudo('path', path)],
+    ...(hostId ? [[hostId, pseudo('generic', hostId)] as [string, string]] : []),
+  ];
+  const maskText = (s: string) => idPairs.reduce((acc, [a, b]) => (a ? acc.split(a).join(b) : acc), s);
+  const displayPrompt = masked ? maskText(prompt) : prompt;
+
   const copy = async () => {
+    if (masked) return;
     try { await navigator.clipboard.writeText(prompt); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { /* clipboard blocked */ }
   };
 
@@ -335,7 +353,7 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
       {/* On phones the CVE list is long; keep the primary copy action within thumb reach as a sticky
           bottom bar. On >=sm it returns to a normal right-aligned button. */}
       <div className="sticky bottom-0 z-10 flex justify-end border-t border-line bg-bg/95 py-2 backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:py-0 sm:backdrop-blur-none">
-        <button type="button" onClick={copy} disabled={prompt.startsWith('（')} className="btn w-full text-sm disabled:opacity-50 sm:w-auto sm:text-xs">{copied ? 'コピーしました' : '📋 プロンプトをコピー'}</button>
+        <button type="button" onClick={copy} disabled={prompt.startsWith('（') || masked} title={masked ? 'デモ用マスク中はコピーできません（解除してください）' : undefined} className="btn w-full text-sm disabled:opacity-50 sm:w-auto sm:text-xs">{copied ? 'コピーしました' : masked ? '🕶 マスク中（コピー不可）' : '📋 プロンプトをコピー'}</button>
       </div>
 
       {/* One-click bulk VEX: mark all checked CVEs "not affected" with a single justification. */}
@@ -352,7 +370,8 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
         {vexMsg && <span className="w-full text-green-600">{vexMsg}</span>}
       </div>
 
-      <pre className="max-h-96 select-all overflow-auto whitespace-pre-wrap break-words rounded bg-bg p-3 text-xs">{prompt}</pre>
+      {masked && !prompt.startsWith('（') && <p className="text-[11px] text-muted">🕶 デモ用マスク中：対象ホスト名・接続先・ホストID・パスを擬名に置き換えて表示しています（コピーは解除後）。</p>}
+      <pre className="max-h-96 select-all overflow-auto whitespace-pre-wrap break-words rounded bg-bg p-3 text-xs">{displayPrompt}</pre>
     </div>
   );
 }

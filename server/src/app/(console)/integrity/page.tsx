@@ -1,6 +1,7 @@
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
+import { Masked, MaskFree } from '@/components/Mask';
 import { Card, ago } from '@/components/ui';
 import { q } from '@/lib/db';
 
@@ -38,7 +39,7 @@ export default async function IntegrityPage() {
         <table className="tbl"><thead><tr><th>ホスト</th><th>種別</th><th>監視ファイル</th><th>ベースライン確定</th><th>最後の変化</th></tr></thead><tbody>
           {hosts.map((h) => (
             <tr key={h.id}>
-              <td><Link href={`/hosts/${h.id}`} className="text-accent">{h.name}</Link></td>
+              <td><Link href={`/hosts/${h.id}`} className="text-accent"><Masked kind="host">{h.name}</Masked></Link></td>
               <td className="text-xs text-muted">{h.kind === 'pull' ? 'プル型' : 'エージェント'}</td>
               <td>{Number(h.files) ? Number(h.files).toLocaleString() : <span className="text-muted">未確定</span>}</td>
               <td className="text-xs text-muted">{h.baseline_at ? new Date(h.baseline_at).toISOString().slice(0, 10) : '-'}</td>
@@ -53,7 +54,7 @@ export default async function IntegrityPage() {
             {changes.map((e, i) => (
               <li key={i} className="flex flex-wrap items-center gap-2 py-1.5">
                 {e.important && <span className="rounded bg-red-600 px-1.5 text-xs text-white">重要</span>}
-                <Link href={`/hosts/${e.host_id}`} className="min-w-0 flex-1 truncate">{e.title}</Link>
+                <Link href={`/hosts/${e.host_id}`} className="min-w-0 flex-1 truncate"><MaskFree>{e.title}</MaskFree></Link>
                 <span className="whitespace-nowrap text-xs text-muted">{ago(e.created_at)}</span>
               </li>
             ))}

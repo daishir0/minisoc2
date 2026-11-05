@@ -1,5 +1,6 @@
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
+import { Masked } from '@/components/Mask';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Card, Kev, SEV_LABEL, Sev, ago, vulnLink } from '@/components/ui';
 import { q } from '@/lib/db';
@@ -77,7 +78,7 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
         {sp.all && <input type="hidden" name="all" value="1" />}
         <button className="btn">絞り込み</button>
         {sp.host && <Link href={link({ host: undefined, system: undefined })} className="btn-ghost">全ホスト</Link>}
-        {sp.system && <Link href={link({ system: undefined })} className="btn-ghost col-span-2 truncate">システム：{sp.system === '__os__' ? 'OSパッケージ' : sp.system.split('/').pop()} ✕</Link>}
+        {sp.system && <Link href={link({ system: undefined })} className="btn-ghost col-span-2 truncate">システム：{sp.system === '__os__' ? 'OSパッケージ' : <Masked kind="system">{sp.system.split('/').pop() ?? ''}</Masked>} ✕</Link>}
         {status === 'suppressed' && <a href={`/api/vex${sp.host ? `?host=${sp.host}` : ''}`} className="btn-ghost">VEX（CycloneDX）を出力</a>}
       </form>
       {/* phones: one card per finding */}
@@ -88,7 +89,7 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
             {f.summary && <div className="mt-1 text-xs text-muted">{f.summary}</div>}
             <div className="mt-1 break-all font-mono text-xs">{f.pkg} <span className="text-muted">{f.version.slice(0, 80)}</span></div>
             {f.fixed && <div className="break-all text-xs text-muted">修正版：{f.fixed.slice(0, 80)}</div>}
-            <div className="mt-1 text-xs text-muted"><Link className="text-accent" href={`/hosts/${f.host_id}`}>{f.host}</Link> · {ago(f.first_seen)}</div>
+            <div className="mt-1 text-xs text-muted"><Link className="text-accent" href={`/hosts/${f.host_id}`}><Masked kind="host">{f.host}</Masked></Link> · {ago(f.first_seen)}</div>
             {status === 'open' && (
               <details className="mt-1">
                 <summary className="cursor-pointer text-xs text-accent">影響なしにする…</summary>
@@ -121,7 +122,7 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
                 <td>{vulnLink(f.vuln_id)}{f.summary && <div className="max-w-md text-xs text-muted">{f.summary}</div>}</td>
                 <td><div className="font-mono text-xs">{f.pkg}</div><div className="max-w-xs truncate text-xs text-muted" title={f.version}>{f.ecosystem} {f.version}</div></td>
                 <td className="max-w-[12rem] truncate font-mono text-xs" title={f.fixed}>{f.fixed || '-'}</td>
-                <td><Link className="text-accent" href={`/hosts/${f.host_id}`}>{f.host}</Link></td>
+                <td><Link className="text-accent" href={`/hosts/${f.host_id}`}><Masked kind="host">{f.host}</Masked></Link></td>
                 <td className="whitespace-nowrap text-xs">{ago(f.first_seen)}</td>
                 <td>
                   {status === 'open' && (

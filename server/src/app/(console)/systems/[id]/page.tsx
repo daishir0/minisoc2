@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { Masked } from '@/components/Mask';
 import { Card, Kev, Sev, ago, vulnLink } from '@/components/ui';
 import { q, q1 } from '@/lib/db';
 import { STACK_KEYS, detectStack } from '@/lib/systemmeta';
@@ -85,23 +86,23 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
 
   return (
     <>
-      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, { label: s.host, href: `/hosts/${s.host_id}` }, { label: s.name }]} />
+      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, { label: s.host, href: `/hosts/${s.host_id}`, mask: 'host' }, { label: s.name, mask: 'system' }]} />
       <div className="flex flex-wrap items-center gap-3">
-        <h1 className="text-xl font-semibold">{s.name}</h1>
+        <h1 className="text-xl font-semibold"><Masked kind="system">{s.name}</Masked></h1>
         {s.ignored && <span className="rounded bg-slate-500 px-2 py-0.5 text-xs text-white">除外中</span>}
-        <span className="text-sm text-muted">{s.host} · {s.root === '__os__' ? 'OSのパッケージマネージャ' : <span className="break-all font-mono">{s.root}</span>}</span>
+        <span className="text-sm text-muted"><Masked kind="host">{s.host}</Masked> · {s.root === '__os__' ? 'OSのパッケージマネージャ' : <span className="break-all font-mono"><Masked kind="path">{s.root}</Masked></span>}</span>
       </div>
       {saved && (
         <div className="rounded-md border border-green-500 bg-green-50 px-3 py-2 text-sm text-green-700 dark:bg-green-950 dark:text-green-200">
           保存しました。登録済みプロジェクトとして評価対象になります（次回の照合から反映）。
           <div className="mt-1 flex gap-3">
-            <Link href={`/hosts/${s.host_id}`} className="text-accent">← {s.host} に戻る（他の候補を登録）</Link>
+            <Link href={`/hosts/${s.host_id}`} className="text-accent">← <Masked kind="host">{s.host}</Masked> に戻る（他の候補を登録）</Link>
             <Link href="/hosts" className="text-accent">資産（ホスト一覧）へ</Link>
           </div>
         </div>
       )}
       <Card title="今すぐ収集">
-        <p className="mb-2 text-sm text-muted">このホスト（{s.host}）を今すぐ収集します（収集はホスト単位なので配下の全システム・OSに反映）。対処後の確認にも使えます。</p>
+        <p className="mb-2 text-sm text-muted">このホスト（<Masked kind="host">{s.host}</Masked>）を今すぐ収集します（収集はホスト単位なので配下の全システム・OSに反映）。対処後の確認にも使えます。</p>
         <ConfirmCollect hostId={s.host_id} pull={hinfo?.kind === 'pull'} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="このホストを今すぐ収集" />
       </Card>
       {s.root !== '__os__' && (
@@ -224,7 +225,7 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
                   <div className="min-w-0 flex-1">
                     <span className="font-mono">{e.pattern}</span>
                     <span className="ml-2 text-xs text-muted">除外中のパッケージ {e.n}件</span>
-                    <div className="text-xs text-muted">理由：{e.reason} ・ {e.created_by} ・ {new Date(e.created_at).toLocaleDateString('ja-JP')}{e.review ? ` ・ 見直し期限 ${e.review}` : ''}</div>
+                    <div className="text-xs text-muted">理由：{e.reason} ・ <Masked kind="email">{e.created_by}</Masked> ・ {new Date(e.created_at).toLocaleDateString('ja-JP')}{e.review ? ` ・ 見直し期限 ${e.review}` : ''}</div>
                   </div>
                   <form action={removeExclude}><input type="hidden" name="id" value={e.id} /><button className="btn-ghost">解除</button></form>
                 </li>

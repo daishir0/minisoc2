@@ -1,3 +1,4 @@
+import { MaskFree } from '@/components/Mask';
 import { KIND_ICON, withGaps, type DayGroup } from '@/lib/timeline';
 
 const fmtDay = (d: string) => {
@@ -19,7 +20,7 @@ export function Timeline({ groups, days, perDay = 3 }: { groups: DayGroup[]; day
             <div className="text-sm font-semibold">{fmtDay(r.g.day)}</div>
             <ul className="mt-1 space-y-1 text-sm">
               {r.g.items.slice(0, perDay).map((it, j) => (
-                <li key={j} className="flex gap-2"><span>{KIND_ICON[it.kind] ?? '・'}</span><span className={`min-w-0 break-words ${it.important ? '' : 'text-muted'}`}>{it.title}</span></li>
+                <li key={j} className="flex gap-2"><span>{KIND_ICON[it.kind] ?? '・'}</span><span className={`min-w-0 break-words ${it.important ? '' : 'text-muted'}`}><MaskFree>{it.title}</MaskFree></span></li>
               ))}
             </ul>
             {r.g.items.length > perDay && (
@@ -27,7 +28,7 @@ export function Timeline({ groups, days, perDay = 3 }: { groups: DayGroup[]; day
                 <summary className="cursor-pointer text-accent">ほか {r.g.items.length - perDay}件</summary>
                 <ul className="mt-1 space-y-1">
                   {r.g.items.slice(perDay).map((it, j) => (
-                    <li key={j} className="flex gap-2"><span>{KIND_ICON[it.kind] ?? '・'}</span><span className={`min-w-0 break-words ${it.important ? '' : 'text-muted'}`}>{it.title}</span></li>
+                    <li key={j} className="flex gap-2"><span>{KIND_ICON[it.kind] ?? '・'}</span><span className={`min-w-0 break-words ${it.important ? '' : 'text-muted'}`}><MaskFree>{it.title}</MaskFree></span></li>
                   ))}
                 </ul>
               </details>

@@ -1,6 +1,7 @@
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
+import { Masked } from '@/components/Mask';
 import { Card, Kev, Sev, vulnLink } from '@/components/ui';
 import { CopyBlock } from '@/components/CopyBlock';
 import { q, q1 } from '@/lib/db';
@@ -38,9 +39,9 @@ export default async function TaskPage({ params, searchParams }: { params: Promi
 
   return (
     <>
-      <Breadcrumbs items={[CRUMB.home, CRUMB.actions, { label: t.host }, { label: t.root === '__os__' ? 'OS' : t.name }]} />
+      <Breadcrumbs items={[CRUMB.home, CRUMB.actions, { label: t.host, mask: 'host' }, { label: t.root === '__os__' ? 'OS' : t.name, mask: t.root === '__os__' ? undefined : 'system' }]} />
       <div className="flex flex-wrap items-center gap-2">
-        <h1 className="text-xl font-semibold">{t.root === '__os__' ? `${t.host} の OS を更新` : `${t.host}／${t.name} の依存を更新`}</h1>
+        <h1 className="text-xl font-semibold"><Masked kind="host">{t.host}</Masked>{t.root === '__os__' ? ' の OS を更新' : <>／<Masked kind="system">{t.name}</Masked> の依存を更新</>}</h1>
         {t.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}
       </div>
       <p className="text-sm">この作業で {t.kev ? <b className="text-red-600">KEV {t.kev}件</b> : null}{t.kev && t.critical ? '・' : ''}{t.critical ? `緊急 ${t.critical}件` : ''} が解消します。{t.reboot && <b> kernel を含むため、更新後に再起動が必要です。</b>}</p>
@@ -49,7 +50,7 @@ export default async function TaskPage({ params, searchParams }: { params: Promi
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="min-w-0 space-y-6 lg:col-span-2">
           <Card title="手順">
-            <p className="mb-2 text-sm text-muted">{t.root === '__os__' ? 'ホストで次を実行します（必要なパッケージだけを更新します）。' : `${t.root} で次を実行し、動作を確認してからデプロイします。`}</p>
+            <p className="mb-2 text-sm text-muted">{t.root === '__os__' ? 'ホストで次を実行します（必要なパッケージだけを更新します）。' : <><Masked kind="path">{t.root}</Masked> で次を実行し、動作を確認してからデプロイします。</>}</p>
             <pre className="select-all whitespace-pre-wrap break-all rounded bg-bg p-3 text-xs">{t.command}</pre>
             {t.reboot && <pre className="mt-2 select-all rounded bg-bg p-3 text-xs">sudo reboot</pre>}
             <p className="mt-2 text-xs text-muted">更新後、次のエージェントの報告（最大1時間）で自動的に「解消」になります。</p>
@@ -58,14 +59,19 @@ export default async function TaskPage({ params, searchParams }: { params: Promi
             <p className="mb-2 text-sm text-muted">
               対象ホスト上で <code>claude</code>（Claude Code）を起動し、下のプロンプトを貼り付けて実行すると、この修正だけを安全に適用できます。<b>内容を確認してから実行してください。</b>minisoc2 がサーバーから実行することはありません。
             </p>
-            <CopyBlock text={remediationPrompt(t, { pull: kindRow?.kind === 'pull' })} />
+            <CopyBlock text={remediationPrompt(t, { pull: kindRow?.kind === 'pull' })} mask={[
+              { from: t.host, kind: 'host' },
+              { from: t.address, kind: 'addr' },
+              { from: t.hostId, kind: 'generic' },
+              ...(t.root !== '__os__' ? [{ from: t.root, kind: 'path' as const }, { from: t.name, kind: 'system' as const }] : []),
+            ]} />
           </Card>
           <Card title={`この作業で守られるシステム（${t.protects.length}）`}>
             {t.protects.length === 0 ? <p className="text-sm text-muted">このホストで、この修正に関係するサービスは見つかりませんでした。</p> : (
               <ul className="divide-y divide-line text-sm">
                 {t.protects.map((p, i) => (
                   <li key={i} className="flex flex-wrap items-center gap-2 py-1.5">
-                    {p.systemId ? <Link href={`/systems/${p.systemId}`} className="font-medium text-accent">{p.name}</Link> : <span className="font-medium">{p.name}</span>}
+                    {p.systemId ? <Link href={`/systems/${p.systemId}`} className="font-medium text-accent"><Masked kind="system">{p.name}</Masked></Link> : <span className="font-medium">{p.name}</span>}
                     {p.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}
                     {p.certainty === 'estimated' && <span className="rounded bg-bg px-1.5 py-0.5 text-[11px] text-muted">推定</span>}
                     <span className="text-xs text-muted">{p.via}</span>

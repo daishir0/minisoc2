@@ -1,5 +1,6 @@
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
+import { Masked } from '@/components/Mask';
 import { Card, ago } from '@/components/ui';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q } from '@/lib/db';
@@ -77,7 +78,7 @@ export default async function HostsPage() {
                 <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-3 py-3 text-sm [&::-webkit-details-marker]:hidden">
                   <span className="tri shrink-0 text-xs text-muted" aria-hidden="true">▶</span>
                   <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${dot(h)}`} title={h.disabled ? '無効' : h.stale_alerted ? '報告停止' : '報告中'} />
-                  <Link href={`/hosts/${h.id}`} className="font-medium text-accent">{h.name}</Link>
+                  <Link href={`/hosts/${h.id}`} className="font-medium text-accent"><Masked kind="host">{h.name}</Masked></Link>
                   {h.kind === 'pull' && <span className="rounded bg-indigo-600 px-1.5 text-[11px] text-white">プル型</span>}
                   <span className="text-xs text-muted">{h.os_name} {h.os_version}</span>
                   <span className="rounded bg-bg px-1.5 text-[11px] text-muted">プロジェクト {projs.length}{Number(h.cand) ? ` ／候補 ${h.cand}` : ''}</span>
@@ -103,7 +104,7 @@ export default async function HostsPage() {
                   )}
                   {envList.filter((e) => Number(e.k) + Number(e.c) + Number(e.hi) > 0).map((e) => (
                     <div key={e.id} className="mb-1 flex flex-wrap items-center gap-2 border-l-2 border-indigo-300 pl-3 py-1">
-                      <Link href={`/systems/${e.id}`} className="font-medium text-accent">実行環境：{e.name}</Link>
+                      <Link href={`/systems/${e.id}`} className="font-medium text-accent">実行環境：<Masked kind="system">{e.name}</Masked></Link>
                       <span className="text-xs text-muted">共有ランタイム（複数プロジェクトで使用）</span>
                       <span className="ml-auto flex items-center gap-3 text-xs">
                         <span className={Number(e.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {e.k}</span>
@@ -120,7 +121,7 @@ export default async function HostsPage() {
                         <li key={p.id} className="flex flex-col gap-1 py-1.5 pl-3 sm:flex-row sm:items-center sm:gap-2">
                           <span className="flex min-w-0 flex-wrap items-center gap-1.5">
                             <span className="text-muted" aria-hidden="true">└</span>
-                            <Link href={`/systems/${p.id}`} className="font-medium text-accent">{p.name}</Link>
+                            <Link href={`/systems/${p.id}`} className="font-medium text-accent"><Masked kind="system">{p.name}</Masked></Link>
                             {p.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}
                             {p.exposure !== 'public' && p.exposure !== 'unknown' && <span className="rounded bg-bg px-1.5 text-[11px] text-muted">{EXPOSURE[p.exposure]}</span>}
                             {p.criticality !== 'normal' && <span className="rounded bg-bg px-1.5 text-[11px] text-muted">{CRITICALITY[p.criticality]}</span>}
