@@ -220,8 +220,17 @@ export async function pollPullNow(fd: FormData): Promise<void> {
 }
 
 // --- Admin two-factor (TOTP) ---
-export async function startTotp(): Promise<void> {
+export async function startTotp(fd?: FormData): Promise<void> {
   const u = await requireUser();
+  // Re-enrolling (generating a new secret) disables the current factor and replaces the key. If 2FA is
+  // already enabled, require a valid current code first — otherwise an open/hijacked session (or a direct
+  // POST to this action, bypassing the UI) could silently drop 2FA without knowing the current code,
+  // defeating the code requirement on disableTotp2fa. First-time enrollment (not yet enabled) needs no code.
+  const { enabled, secret } = await getTotp(u.id);
+  if (enabled && secret) {
+    const code = String(fd?.get('code') ?? '').trim();
+    if (!verifyTotp(secret, code)) redirect('/settings?totp=bad');
+  }
   await startTotpSecret(u.id);
   revalidatePath('/settings');
   redirect('/settings?totp=setup');

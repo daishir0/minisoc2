@@ -31,7 +31,7 @@ interface KevItem {
 
 export async function syncKev(): Promise<number> {
   try {
-    const res = await fetch(KEV_URL, { headers: { 'user-agent': 'minisoc2' } });
+    const res = await fetch(KEV_URL, { headers: { 'user-agent': 'minisoc2' }, signal: AbortSignal.timeout(30_000) });
     if (!res.ok) throw new Error(`KEV HTTP ${res.status}`);
     const j = (await res.json()) as { vulnerabilities: KevItem[] };
     const items = j.vulnerabilities ?? [];

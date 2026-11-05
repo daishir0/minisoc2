@@ -19,6 +19,10 @@ export async function sendMail(subject: string, text: string, override?: MailSet
     port: m.port,
     secure: m.secure,
     auth: { user, pass: mailPassword(m) },
+    // Bound every stage so a stalled SMTP server cannot hang the worker tick indefinitely.
+    connectionTimeout: 20_000,
+    greetingTimeout: 20_000,
+    socketTimeout: 30_000,
   });
   try {
     await transport.sendMail({ from: m.from || user, to: m.to, subject, text });

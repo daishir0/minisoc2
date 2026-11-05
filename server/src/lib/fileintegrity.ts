@@ -21,7 +21,7 @@ export function pathSeverity(p: string): Sev {
 const nul = (x: string) => x.replace(/\u0000/g, '');
 const SEV_LABEL: Record<Sev, string> = { critical: '重大', high: '高', medium: '中', low: '低' };
 
-interface Change { path: string; kind: 'added' | 'changed' | 'removed'; sev: Sev }
+interface Change { path: string; kind: 'added' | 'changed' | 'removed'; sev: Sev; sha: string }
 
 export async function ingestFiles(
   host: { id: string; name: string; baseline_done: boolean },
@@ -48,11 +48,11 @@ export async function ingestFiles(
   if (!firstBaseline) {
     for (const [p, f] of reported) {
       const prev = base.get(p);
-      if (prev === undefined) { if (complete) changes.push({ path: p, kind: 'added', sev: pathSeverity(p) }); } // else: converging, absorb quietly
-      else if (prev !== f.h) changes.push({ path: p, kind: 'changed', sev: pathSeverity(p) });
+      if (prev === undefined) { if (complete) changes.push({ path: p, kind: 'added', sev: pathSeverity(p), sha: f.h }); } // else: converging, absorb quietly
+      else if (prev !== f.h) changes.push({ path: p, kind: 'changed', sev: pathSeverity(p), sha: f.h });
     }
     if (!truncated) {
-      for (const p of base.keys()) if (!reported.has(p)) changes.push({ path: p, kind: 'removed', sev: pathSeverity(p) });
+      for (const p of base.keys()) if (!reported.has(p)) changes.push({ path: p, kind: 'removed', sev: pathSeverity(p), sha: base.get(p) ?? '' });
     }
   }
 
@@ -123,7 +123,10 @@ export async function ingestFiles(
       hostId: host.id,
       title: `[${host.name}] 監視ファイルの${KIND[c.kind]}（${SEV_LABEL[c.sev]}）：${c.path}`,
       detail: 'AIDE相当のファイル整合性チェックで検出しました。意図した変更でなければ侵害を疑ってください。',
-      dedupeKey: `file:${host.id}:${c.kind}:${c.path}`,
+      // Include the new content hash so a SECOND distinct change to the same path re-alerts (the baseline
+      // is auto-promoted after each run, so without the hash the dedupe key would be identical and
+      // raiseAlert's ON CONFLICT DO NOTHING would swallow every change after the first).
+      dedupeKey: `file:${host.id}:${c.kind}:${c.path}:${c.sha}`,
     });
   }
   if (notable.length > CAP) {

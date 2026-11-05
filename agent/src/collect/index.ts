@@ -48,7 +48,10 @@ export async function collect(cfg: AgentConfig, agentVersion: string): Promise<R
   const osFixed = await step('osFixed', () => dnfFixed(errors, cfg.useSudo), null);
   const services = await step('services', () => linuxServices(errors), []);
   const integrity = cfg.aide
-    ? await step('files', () => fileIntegrity({ ...cfg, aidePaths: cfg.aidePaths ?? DEFAULT_AIDE_PATHS }, errors), { files: [], truncated: false })
+    // On failure, report files:null (= "not collected this run"), NOT an empty list. An empty list with
+    // truncated:false would make the server treat every baseline file as "removed" (mass false alerts +
+    // baseline wipe). null makes the server skip the integrity diff entirely for this run.
+    ? await step('files', () => fileIntegrity({ ...cfg, aidePaths: cfg.aidePaths ?? DEFAULT_AIDE_PATHS }, errors), { files: null as never, truncated: true })
     : { files: null as never, truncated: false };
 
   return {

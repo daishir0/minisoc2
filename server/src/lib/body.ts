@@ -47,6 +47,18 @@ export function isLimited(key: string, max: number): boolean {
   return !!h && h.reset >= Date.now() && h.n >= max;
 }
 
+// Resolve the real client IP from an X-Forwarded-For header value. The LEFTMOST entry is supplied by the
+// client and therefore spoofable (a client can inject its own XFF; our reverse proxy only APPENDS the
+// peer it saw). So we trust only the value our own proxy set: count `TRUSTED_PROXY_HOPS` proxies in from
+// the right (default 1 = a single Apache/nginx in front). This is what IP allow-lists and the login
+// rate-limit key off, so getting it wrong means either spoofable allow-listing or spoofable limiting.
+export function pickClientIp(xff: string | null | undefined): string {
+  const parts = (xff ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!parts.length) return 'unknown';
+  const hops = Math.max(1, Number(process.env.TRUSTED_PROXY_HOPS) || 1);
+  return parts[Math.max(0, parts.length - hops)] || 'unknown';
+}
+
 export function clientIp(req: Request): string {
-  return (req.headers.get('x-forwarded-for') ?? '').split(',')[0].trim() || 'unknown';
+  return pickClientIp(req.headers.get('x-forwarded-for'));
 }

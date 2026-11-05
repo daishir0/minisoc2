@@ -7,14 +7,26 @@ export async function GET(req: Request) {
   if (!(await currentUser())) return new Response('unauthorized', { status: 401 });
   const host = new URL(req.url).searchParams.get('host');
   const params: unknown[] = [];
-  let where = "f.status='suppressed'";
+  let hostFilter = '';
   if (host && /^[0-9a-f-]{36}$/.test(host)) {
     params.push(host);
-    where += ' AND f.host_id=$1';
+    hostFilter = ' WHERE x.host_id=$1';
   }
+  // Two "not affected" sources, both exported as CycloneDX VEX not_affected:
+  //   1. findings.status='suppressed' — a whole finding marked not-affected (from the findings page).
+  //   2. finding_vex — a PER-SYSTEM "影響なし" (from the remediation picker). These are filtered out of
+  //      matching so they never surface as findings, but they are still real, justified judgments and
+  //      belong in the external VEX/SBOM. Their version is the package's current installed version.
   const rows = await q<{ vuln_id: string; ecosystem: string; pkg: string; version: string; suppress_reason: string; suppress_note: string | null; suppressed_at: Date; host: string }>(
-    `SELECT f.vuln_id, f.ecosystem, f.pkg, f.version, f.suppress_reason, f.suppress_note, f.suppressed_at, h.name AS host
-     FROM findings f JOIN hosts h ON h.id=f.host_id WHERE ${where} ORDER BY f.vuln_id`,
+    `SELECT x.vuln_id, x.ecosystem, x.pkg, x.version, x.suppress_reason, x.suppress_note, x.suppressed_at, x.host FROM (
+       SELECT f.vuln_id, f.ecosystem, f.pkg, f.version, f.suppress_reason, f.suppress_note, f.suppressed_at, h.name AS host, f.host_id
+         FROM findings f JOIN hosts h ON h.id=f.host_id WHERE f.status='suppressed'
+       UNION ALL
+       SELECT fv.vuln_id, fv.ecosystem, fv.pkg,
+              COALESCE((SELECT p.version FROM host_packages p WHERE p.host_id=fv.host_id AND p.ecosystem=fv.ecosystem AND p.name=fv.pkg LIMIT 1), '') AS version,
+              fv.reason AS suppress_reason, fv.note AS suppress_note, fv.created_at AS suppressed_at, h.name AS host, fv.host_id
+         FROM finding_vex fv JOIN hosts h ON h.id=fv.host_id
+     ) x${hostFilter} ORDER BY x.vuln_id`,
     params,
   );
   const ref = (r: (typeof rows)[number]) => `${r.host}/${r.ecosystem}/${r.pkg}@${r.version.split(',')[0].trim()}`;

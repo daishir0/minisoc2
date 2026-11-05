@@ -3,14 +3,14 @@
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
 import { createAdmin, endSession, hasAdmin, startSession, verifyLogin } from '@/lib/auth';
-import { isLimited, rateLimited } from '@/lib/body';
+import { isLimited, pickClientIp, rateLimited } from '@/lib/body';
 import { safeEqual } from '@/lib/secrets';
 import { verifyTotp } from '@/lib/totp';
 
 export type FormState = { error?: string; totp?: boolean };
 
 async function ip(): Promise<string> {
-  return ((await headers()).get('x-forwarded-for') ?? '').split(',')[0].trim() || 'unknown';
+  return pickClientIp((await headers()).get('x-forwarded-for'));
 }
 
 export async function login(_: FormState, fd: FormData): Promise<FormState> {

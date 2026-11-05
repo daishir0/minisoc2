@@ -136,7 +136,7 @@ export function compileRule(doc: SigmaDoc): CompiledSigma | null {
 
 export async function syncSigma(): Promise<{ kept: number; total: number }> {
   try {
-    const res = await fetch(TARBALL, { headers: { 'user-agent': 'minisoc2' }, redirect: 'follow' });
+    const res = await fetch(TARBALL, { headers: { 'user-agent': 'minisoc2' }, redirect: 'follow', signal: AbortSignal.timeout(60_000) });
     if (!res.ok) throw new Error(`sigma download HTTP ${res.status}`);
     const tar = gunzipSync(Buffer.from(await res.arrayBuffer()));
     let total = 0;

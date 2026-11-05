@@ -35,7 +35,7 @@ interface OsvVuln {
 
 async function osvFetch(path: string, body?: unknown): Promise<unknown> {
   for (let attempt = 0; attempt < 3; attempt++) {
-    const res = await fetch(`${OSV}${path}`, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {});
+    const res = await fetch(`${OSV}${path}`, { signal: AbortSignal.timeout(30_000), ...(body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : {}) });
     if (res.ok) return res.json();
     if (res.status === 404) return null;
     if (res.status < 500 && res.status !== 429) throw new Error(`OSV ${path} HTTP ${res.status}`);
@@ -265,6 +265,11 @@ export async function matchHost(hostId: string): Promise<{ open: number; added: 
   const policy = await getPolicy();
   const host = await q1<{ name: string; baseline_done: boolean }>('SELECT name, baseline_done FROM hosts WHERE id=$1', [hostId]);
   if (!host) return { open: 0, added: 0, resolved: 0 };
+  // Capture when this match began. The inventory it operates on is read below; if a NEW report lands
+  // while we run (ingest sets last_seen_at=now() + needs_match=true), clearing needs_match unconditionally
+  // at the end would drop that new inventory until the daily full re-match. We instead clear it only when
+  // no newer report arrived (last_seen_at <= matchStart). See the final UPDATE.
+  const matchStart = new Date();
   try {
     await refreshCache(hostId, policy.osvCacheHours);
     await markFeed('osv', true);
@@ -356,8 +361,12 @@ export async function matchHost(hostId: string): Promise<{ open: number; added: 
     }
   }
 
-  // Whatever was open but no longer matches has been fixed.
-  const gone = [...existing.values()].filter((f) => f.status !== 'resolved');
+  // Whatever was OPEN but no longer matches has been fixed. Deliberately NOT 'suppressed': a "影響なし"
+  // judgment must survive a transient inventory gap (a partially-failed collection, or an exclude being
+  // toggled). If we resolved suppressed findings here, a later re-appearance would come back as
+  // status='open' with first_seen=now() and re-alert, silently discarding the human's VEX decision.
+  // A genuinely-removed package simply keeps its (harmless, non-alerting) suppressed row.
+  const gone = [...existing.values()].filter((f) => f.status === 'open');
   if (gone.length) {
     await q("UPDATE findings SET status='resolved', resolved_at=now() WHERE id = ANY($1::bigint[])", [gone.map((f) => f.id)]);
     for (const f of gone) {
@@ -440,7 +449,10 @@ export async function matchHost(hostId: string): Promise<{ open: number; added: 
   }
   await snapshot(hostId);
   const sources = [...new Set([...knownSources, ...[...cands.values()].map((c) => c.source)])];
-  await q('UPDATE hosts SET needs_match=false, baseline_done=true, baseline_sources=$2 WHERE id=$1', [hostId, sources]);
+  // Clear needs_match ONLY if no newer report arrived while we matched (see matchStart). If one did,
+  // leave the flag set so the next tick re-matches the fresh inventory instead of waiting for the
+  // daily full re-match.
+  await q('UPDATE hosts SET needs_match = COALESCE(last_seen_at > $3, false), baseline_done=true, baseline_sources=$2 WHERE id=$1', [hostId, sources, matchStart]);
   const open = await q1<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='open'", [hostId]);
   return { open: Number(open?.n ?? 0), added, resolved: gone.length };
 }

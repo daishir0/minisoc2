@@ -82,6 +82,8 @@ async function postJson(url: string, body: unknown, token?: string): Promise<Res
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
     body: gz,
+    // A hung server must not leave a cron-spawned agent process alive forever (reports can be large).
+    signal: AbortSignal.timeout(120_000),
   });
 }
 
@@ -129,7 +131,7 @@ async function install(opts: Record<string, string | boolean>) {
 // a full report. Called frequently by cron, so it does almost nothing in the common (no-request) case.
 async function pendingCheck(cfg: AgentConfig): Promise<boolean> {
   try {
-    const res = await fetch(`${cfg.server}/api/v1/pending`, { headers: { authorization: `Bearer ${cfg.hostToken}` } });
+    const res = await fetch(`${cfg.server}/api/v1/pending`, { headers: { authorization: `Bearer ${cfg.hostToken}` }, signal: AbortSignal.timeout(15_000) });
     if (!res.ok) return false;
     const j = (await res.json().catch(() => ({}))) as { collect?: boolean };
     return !!j.collect;
