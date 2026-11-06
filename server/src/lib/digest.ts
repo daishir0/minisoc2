@@ -1,57 +1,78 @@
-// Daily summary mail: action-first (today's top priorities with direct links), then what changed in the
-// last 24 hours and the improvement (how many were resolved). Nothing to say -> no mail.
+// Daily summary mail. Vulnerability-first and de-duplicated: one block per host, findings sorted by
+// priority (KEV → public → EPSS → severity), each line carrying the CVE id + title, when it was made
+// public to the world (vulns.published, + how many days ago) and when WE first detected it on the host
+// (findings.first_seen). New (last 24h) and existing open findings are both shown; resolved items are
+// not. Intrusion / monitoring signals are a separate, per-host-collapsed section.
 import { q } from './db';
 import { sendMail } from './mail';
 import { getMail } from './settings';
-import { listTasks } from './tasks';
+import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, opsLine, type CveRow } from './mailfmt';
+
+type Row = CveRow & { host_id: string; host: string };
+
+const PER_HOST = 8;
 
 export async function buildDigest(since: Date): Promise<{ subject: string; body: string } | null> {
   const url = (process.env.PUBLIC_URL ?? '').replace(/\/+$/, '');
-  const ev = await q<{ title: string; important: boolean; kind: string }>(
-    'SELECT title, important, kind FROM change_events WHERE ts >= $1 ORDER BY important DESC, ts DESC', [since],
-  );
-  const totals = await q<{ kev: string; critical: string; stale: string; resolved: string }>(
-    `SELECT (SELECT count(*) FROM findings WHERE status='open' AND kev) AS kev,
-            (SELECT count(*) FROM findings WHERE status='open' AND NOT kev AND severity='critical') AS critical,
-            (SELECT count(*) FROM hosts WHERE stale_alerted AND NOT disabled) AS stale,
-            (SELECT count(*) FROM findings WHERE status='resolved' AND resolved_at >= $1) AS resolved`,
+  // Notified findings are KEV + critical ONLY. "高"（high）and below are tracked in the app but never
+  // e-mailed — the mail is a "緊急だけ" channel, matching the home/findings "KEV・緊急" surface.
+  const rows = await q<Row>(
+    `SELECT f.host_id, h.name AS host, ${CVE_SELECT('$1')}
+     FROM findings f JOIN hosts h ON h.id=f.host_id
+     ${CVE_JOIN}
+     WHERE f.status='open' AND NOT h.disabled AND (f.kev OR f.severity='critical')`,
     [since],
   );
-  const t = totals[0];
-  // Top remediation tasks, already risk-ranked (Act → Attend → Track, then EPSS/exposure).
-  const tasks = (await listTasks()).filter((x) => x.kev + x.critical > 0);
-  if (!ev.length && !tasks.length) return null;
-  const imp = ev.filter((e) => e.important);
-  const other = ev.filter((e) => !e.important);
-  const pct = (e: number | null) => (e != null ? ` ・ EPSS ${Math.round(e * 100)}%` : '');
-  const BK: Record<string, string> = { act: '今すぐ', attend: '今週', track: '様子見' };
-  const subject = tasks.length
-    ? `[minisoc2] 日次まとめ：今日やる ${Math.min(tasks.length, 3)}件ほか（未対応 KEV ${t.kev} / 緊急 ${t.critical}）`
-    : `[minisoc2] 日次まとめ：未対応なし（KEV ${t.kev} / 緊急 ${t.critical}）`;
-  const body = [
-    '過去24時間のまとめです。',
-    `現在の未対応：KEV ${t.kev}件 / 緊急 ${t.critical}件${Number(t.stale) ? ` / 報告停止 ${t.stale}台` : ''}`,
-    Number(t.resolved) ? `この24時間で解消：${t.resolved}件 ✅` : '',
+  // per-host KEV/critical totals (for the header) + new-count among those
+  const totals = await q<{ host_id: string; kev: string; crit: string; neww: string }>(
+    `SELECT host_id,
+            count(*) FILTER (WHERE kev) AS kev,
+            count(*) FILTER (WHERE NOT kev AND severity='critical') AS crit,
+            count(*) FILTER (WHERE first_seen >= $1) AS neww
+     FROM findings WHERE status='open' AND (kev OR severity='critical') GROUP BY host_id`, [since],
+  );
+  const tot = new Map(totals.map((t) => [t.host_id, t]));
+  // intrusion / monitoring, collapsed to one line per host
+  const ops = await q<{ host: string; kind: string; n: string }>(
+    `SELECT COALESCE(h.name, '(ホスト不明)') AS host, a.kind, count(*) AS n FROM alerts a LEFT JOIN hosts h ON h.id=a.host_id
+     WHERE a.status='open' AND a.kind IN ('state','log','stale','feed','disk','agent') AND a.created_at >= $1
+     GROUP BY h.name, a.kind ORDER BY h.name`, [since],
+  );
+  if (!rows.length && !ops.length) return null;
+
+  const byHost = new Map<string, Row[]>();
+  for (const r of rows) byHost.set(r.host, [...(byHost.get(r.host) ?? []), r]);
+  // hosts ordered by their most urgent finding
+  const hosts = [...byHost.entries()].sort((a, b) => Math.max(...b[1].map(cveScore)) - Math.max(...a[1].map(cveScore)));
+
+  const grandKev = [...tot.values()].reduce((a, t) => a + Number(t.kev), 0);
+  const grandCrit = [...tot.values()].reduce((a, t) => a + Number(t.crit), 0);
+
+  const lines: string[] = [
+    '過去24時間時点の、未対応の脆弱性です（重要な順・ホストごと）。',
+    '各行：深刻度 / CVE・タイトル / EPSS / 公開日（世界に明らかになった日）/ 当システムが検出した日時。',
     '',
-    tasks.length ? '■ 今日やる（優先度順・各行を開いてプロンプトをコピー）' : '■ 対応が必要な脆弱性はありません',
-    ...tasks.slice(0, 5).map((x) => {
-      const where = x.root === '__os__' ? `${x.host} ／ OSパッケージ` : `${x.host} ／ ${x.name}`;
-      const badge = [`[${BK[x.bucket]}]`, x.kev && `KEV ${x.kev}`, x.critical && `緊急 ${x.critical}`, x.exposure === 'public' && '公開'].filter(Boolean).join(' ');
-      return `・${badge}${pct(x.epss)}\n    ${where}\n    ▶ ${url}/actions/${x.key}`;
-    }),
-    tasks.length > 5 ? `  …ほか ${tasks.length - 5}件` : '',
-    '',
-    imp.length ? '■ 重要な変化（侵入の兆候・監視の停止など）' : '',
-    ...imp.slice(0, 10).map((e) => `・${e.title}`),
-    imp.length > 10 ? `  …ほか ${imp.length - 10}件` : '',
-    other.length ? `\n■ その他の変化 ${other.length}件（高以下・基準線・運用の記録など）` : '',
-    ...other.slice(0, 5).map((e) => `・${e.title}`),
-    '',
-    '――――――',
-    `今日やること（優先度順）: ${url}/`,
-    `すべての対応: ${url}/actions`,
-    `変化の履歴: ${url}/changes`,
-  ].filter((x, i, a) => !(x === '' && a[i - 1] === '')).join('\n');
+  ];
+  for (const [host, frs] of hosts) {
+    const t = tot.get(frs[0].host_id);
+    const head = t ? `KEV ${t.kev}・緊急 ${t.crit}${Number(t.neww) ? `（新規 +${t.neww}）` : ''}` : '';
+    lines.push(`■ ${host}　${head}`);
+    frs.sort(cveSort).slice(0, PER_HOST).forEach((r, i) => lines.push(...cveLines(r, i)));
+    if (frs.length > PER_HOST) lines.push(`  …ほか ${frs.length - PER_HOST}件`);
+    lines.push(`  ▶ ${url}/hosts/${frs[0].host_id}`);
+    lines.push('');
+  }
+  if (ops.length) {
+    lines.push('■ 要確認（侵入の兆候・監視の停止など）');
+    const opByHost = new Map<string, { kind: string; n: number }[]>();
+    for (const o of ops) opByHost.set(o.host, [...(opByHost.get(o.host) ?? []), { kind: o.kind, n: Number(o.n) }]);
+    for (const [host, kinds] of opByHost) lines.push(opsLine(host, kinds));
+    lines.push('');
+  }
+  lines.push('――――――', `今日やること（優先度順）: ${url}/`, `すべての対応: ${url}/actions`);
+
+  const subject = `[minisoc2] 日次まとめ（未対応 KEV ${grandKev} / 緊急 ${grandCrit}）`;
+  const body = lines.filter((x, i, a) => !(x === '' && a[i - 1] === '')).join('\n');
   return { subject, body };
 }
 
