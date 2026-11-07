@@ -290,23 +290,23 @@ async function fileDailySnapshot() {
     if (!base.length) continue;
     const snap = new Map((await q<{ path: string; sha: string }>('SELECT path, sha FROM host_file_snap WHERE host_id=$1', [h.id])).map((r) => [r.path, r.sha]));
     if (snap.size) { // skip the diff on the very first capture for a host
-      const diffs: { path: string; kind: string; sev: string }[] = [];
+      const diffs: { path: string; kind: string; sev: string; old: string; neu: string }[] = [];
       const seen = new Set<string>();
       for (const b of base) {
         seen.add(b.path);
         const prev = snap.get(b.path);
-        if (prev === undefined) diffs.push({ path: b.path, kind: 'added', sev: pathSeverity(b.path) });
-        else if (prev !== b.sha) diffs.push({ path: b.path, kind: 'changed', sev: pathSeverity(b.path) });
+        if (prev === undefined) diffs.push({ path: b.path, kind: 'added', sev: pathSeverity(b.path), old: '', neu: b.sha });
+        else if (prev !== b.sha) diffs.push({ path: b.path, kind: 'changed', sev: pathSeverity(b.path), old: prev, neu: b.sha });
       }
-      for (const p of snap.keys()) if (!seen.has(p)) diffs.push({ path: p, kind: 'removed', sev: pathSeverity(p) });
+      for (const [p, s] of snap) if (!seen.has(p)) diffs.push({ path: p, kind: 'removed', sev: pathSeverity(p), old: s, neu: '' });
       await q('DELETE FROM host_file_day WHERE host_id=$1 AND day=$2', [h.id, today]);
       for (let i = 0; i < diffs.length; i += 2000) {
         const c = diffs.slice(i, i + 2000);
         await q(
-          `INSERT INTO host_file_day(host_id, day, path, kind, sev)
-           SELECT $1, $2, * FROM unnest($3::text[], $4::text[], $5::text[])
-           ON CONFLICT (host_id, day, path) DO UPDATE SET kind=EXCLUDED.kind, sev=EXCLUDED.sev`,
-          [h.id, today, c.map((x) => x.path), c.map((x) => x.kind), c.map((x) => x.sev)],
+          `INSERT INTO host_file_day(host_id, day, path, kind, sev, old_sha, new_sha)
+           SELECT $1, $2, * FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[])
+           ON CONFLICT (host_id, day, path) DO UPDATE SET kind=EXCLUDED.kind, sev=EXCLUDED.sev, old_sha=EXCLUDED.old_sha, new_sha=EXCLUDED.new_sha`,
+          [h.id, today, c.map((x) => x.path), c.map((x) => x.kind), c.map((x) => x.sev), c.map((x) => x.old), c.map((x) => x.neu)],
         );
       }
       if (diffs.length) log(`file-daily ${h.id.slice(0, 8)}: ${diffs.length} changes vs yesterday`);
