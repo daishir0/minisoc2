@@ -11,6 +11,22 @@ const KINDS: [string, string][] = [
   ['host_state', 'ホストの変化'], ['log', 'ログの検知'], ['feed', '脆弱性情報フィード同期'], ['ingest', 'エージェント受信'], ['health', '監視の健全性'], ['ops', '運用の記録'],
 ];
 const KIND_LABEL = Object.fromEntries(KINDS.filter(([k]) => k));
+// Per-kind tint: a 4px left bar + a very faint row background (both light/dark). Alarm kinds are more
+// saturated; routine high-volume kinds (feed/ingest) are the most muted so the eye lands on real changes.
+// Full literal class strings so Tailwind keeps them.
+const KIND_STYLE: Record<string, { row: string; dot: string }> = {
+  kev_added: { row: 'border-red-400 bg-red-50 dark:bg-red-950/30', dot: 'bg-red-400' },
+  vuln_new: { row: 'border-orange-400 bg-orange-50 dark:bg-orange-950/30', dot: 'bg-orange-400' },
+  vuln_resolved: { row: 'border-green-400 bg-green-50 dark:bg-green-950/30', dot: 'bg-green-400' },
+  system_new: { row: 'border-blue-400 bg-blue-50 dark:bg-blue-950/30', dot: 'bg-blue-400' },
+  host_state: { row: 'border-violet-400 bg-violet-50 dark:bg-violet-950/30', dot: 'bg-violet-400' },
+  log: { row: 'border-teal-400 bg-teal-50 dark:bg-teal-950/30', dot: 'bg-teal-400' },
+  health: { row: 'border-yellow-400 bg-yellow-50 dark:bg-yellow-950/30', dot: 'bg-yellow-400' },
+  ops: { row: 'border-zinc-300 bg-zinc-50 dark:bg-zinc-900/40', dot: 'bg-zinc-400' },
+  feed: { row: 'border-slate-300 bg-slate-50/60 dark:bg-slate-900/30', dot: 'bg-slate-400' },
+  ingest: { row: 'border-slate-200 dark:border-slate-700', dot: 'bg-slate-300' },
+};
+const DEFAULT_STYLE = { row: 'border-line', dot: 'bg-slate-400' };
 const PAGE = 500;
 
 // Full timestamp down to the second (process-local time), newest first.
@@ -58,12 +74,17 @@ export default async function ChangesPage({ searchParams }: { searchParams: Prom
           新しい順・1件ずつ（秒まで）で表示しています。{importantOnly && <Link className="ml-1 text-accent" href={`/changes?days=${days}`}>すべて表示</Link>}
           {rows.length >= PAGE && <span className="ml-1">（最新{PAGE}件。期間や種別で絞り込めます）</span>}
         </p>
+        <div className="mb-3 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted">
+          {KINDS.filter(([k]) => k).map(([k, l]) => (
+            <span key={k} className="inline-flex items-center gap-1"><span className={`inline-block h-2.5 w-2.5 rounded-sm ${(KIND_STYLE[k] ?? DEFAULT_STYLE).dot}`} />{l}</span>
+          ))}
+        </div>
         {rows.length === 0 ? (
           <p className="text-sm text-muted">この条件に該当する記録はありません。</p>
         ) : (
-          <ul className="divide-y divide-line">
+          <ul className="space-y-1">
             {rows.map((e, i) => (
-              <li key={i} className="flex flex-col gap-0.5 py-2 text-sm sm:flex-row sm:items-start sm:gap-3">
+              <li key={i} className={`flex flex-col gap-0.5 rounded-r border-l-4 ${(KIND_STYLE[e.kind] ?? DEFAULT_STYLE).row} px-2 py-2 text-sm sm:flex-row sm:items-start sm:gap-3`}>
                 <span className="shrink-0 whitespace-nowrap font-mono text-xs text-muted" title={new Date(e.ts).toISOString()}>{fmtTs(e.ts)}</span>
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-x-2 gap-y-1">
