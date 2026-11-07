@@ -349,11 +349,11 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           <form action={savePullAide} className="mt-4 space-y-2 border-t border-line pt-3">
             <input type="hidden" name="id" value={h.id} />
             <h3 className="text-xs font-semibold text-muted">監視ディレクトリ（複数可・改行区切り）</h3>
-            <p className="text-xs text-muted">この配下のファイルを読み取り専用でハッシュし、改ざんを検知します。例：<code>~/www/path-finder.jp</code>、<code>~/bin</code>。空欄なら SSH鍵・crontab のみ。</p>
-            <textarea name="aidePaths" rows={3} className="input font-mono text-xs" defaultValue={(pull.aide_paths ?? []).join('\n')} placeholder={'~/www/path-finder.jp\n~/bin'} />
-            <h3 className="text-xs font-semibold text-muted">除外するサブディレクトリ（複数可・改行区切り）</h3>
-            <p className="text-xs text-muted">上の監視対象から外すパス。例：<code>~/www/path-finder.jp/cache</code>、<code>~/www/blog.path-finder.jp/wp-content/uploads</code>（node_modules・.git・vendor は自動除外）。</p>
-            <textarea name="aideExcludes" rows={2} className="input font-mono text-xs" defaultValue={(pull.aide_excludes ?? []).join('\n')} placeholder={'~/www/path-finder.jp/wp-content/cache'} />
+            <p className="text-xs text-muted">この配下のファイルを読み取り専用でハッシュし、改ざんを検知します。何本でも登録できます。例：<code>~/www/example.com</code>、<code>~/bin</code>。空欄なら SSH鍵・crontab のみ。</p>
+            <textarea name="aidePaths" rows={3} className="input font-mono text-xs" defaultValue={(pull.aide_paths ?? []).join('\n')} placeholder={'~/www/example.com\n~/bin'} />
+            <h3 className="text-xs font-semibold text-muted">除外するサブディレクトリ・ファイル（複数可・改行区切り）</h3>
+            <p className="text-xs text-muted">上の監視対象から外すパス。ディレクトリ（配下ごと）・単一ファイルのどちらも可。<b>glob 可</b>（<code>*</code>＝1階層、<code>**</code>＝全階層、<code>?</code>＝1文字）。例：<code>~/www/example.com/cache</code>、<code>**/wp-content/uploads</code>、<code>**/*.log</code>（node_modules・.git・vendor は自動除外）。</p>
+            <textarea name="aideExcludes" rows={2} className="input font-mono text-xs" defaultValue={(pull.aide_excludes ?? []).join('\n')} placeholder={'**/cache\n~/www/example.com/wp-content/uploads'} />
             <PendingButton className="btn-ghost" pendingText="保存中…">保存（次回の収集から反映）</PendingButton>
           </form>
         )}

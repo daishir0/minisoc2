@@ -57,12 +57,35 @@ function expandGlob(pattern: string): string[] {
   }
 }
 
+// Translate an exclude glob to an anchored RegExp over absolute paths. `**`(/) spans path segments,
+// `*` stays within one segment, `?` is one non-"/" char. A trailing "(/.*)?" lets a matched directory
+// prune its whole subtree. A leading "/" anchors to the path start; otherwise the tail may match.
+function excludeGlobToRegExp(p: string): RegExp {
+  let re = '';
+  for (let i = 0; i < p.length; i++) {
+    const c = p[i];
+    if (c === '*') {
+      if (p[i + 1] === '*') { i++; if (p[i + 1] === '/') { i++; re += '(?:.*/)?'; } else re += '.*'; }
+      else re += '[^/]*';
+    } else if (c === '?') re += '[^/]';
+    else re += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp((p.startsWith('/') ? '^' : '(?:^|.*/)') + re + '(?:/.*)?$');
+}
+
 export function fileIntegrity(cfg: AgentConfig, errors: CollectError[]): { files: FileHash[]; truncated: boolean } {
   const started = Date.now();
   const skip = new Set(cfg.skipDirs);
-  // absolute sub-paths to prune from the scan (with ~ expanded)
-  const excludes = (cfg.aideExcludes ?? []).map((p) => p.replace(/^~(?=\/|$)/, homedir()).replace(/\/+$/, ''));
-  const excluded = (full: string) => excludes.some((e) => full === e || full.startsWith(e + '/'));
+  // Exclude patterns (with ~ expanded, trailing "/" trimmed). Two forms, both pruning the matched path's
+  // subtree during the walk:
+  //   - plain path: exact match OR directory prefix (e.g. /var/www/app/cache, /etc/app/secret.env)
+  //   - glob (contains * or ?): `*`=within one segment, `**`=across segments, `?`=one char
+  //     (e.g. **/cache, *.log, /var/log/**/*.gz). A leading "/" anchors; otherwise it matches the tail.
+  const rawEx = (cfg.aideExcludes ?? []).map((p) => p.replace(/^~(?=\/|$)/, homedir()).replace(/\/+$/, ''));
+  const plainEx = rawEx.filter((e) => e && !/[*?]/.test(e));
+  const globEx = rawEx.filter((e) => e && /[*?]/.test(e)).map(excludeGlobToRegExp);
+  const excluded = (full: string) =>
+    plainEx.some((e) => full === e || full.startsWith(e + '/')) || globEx.some((re) => re.test(full));
   const cache = loadCache();
   const next: Record<string, CacheEntry> = {};
   const out: FileHash[] = [];

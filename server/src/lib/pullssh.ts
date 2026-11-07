@@ -60,7 +60,13 @@ function buildScript(t: PullTarget): string {
   // and dependency dirs. Bounded by AIDE_FILE_MAX to keep a poll cheap.
   const aidePaths = t.aide_paths.filter(safePath);
   const aideExcl = t.aide_excludes.filter(safePath);
-  const prune = ['-name node_modules', '-name .git', '-name vendor', ...aideExcl.map((e) => `-path ${e}*`)].join(' -o ');
+  // safePath forbids quotes/spaces/shell metachars (only [A-Za-z0-9._/*~-]), so single-quoting the
+  // argument is injection-safe AND stops the remote shell from glob-expanding it — `find -path` then does
+  // the globbing itself (`*`/`?` wildcards, `*` spanning "/"). Match the path exactly and prune its whole
+  // subtree; this also supports glob excludes like **/cache or /var/log/**/*.gz.
+  const q1 = (s: string) => `'${s}'`;
+  const prune = ['-name node_modules', '-name .git', '-name vendor',
+    ...aideExcl.flatMap((e) => [`-path ${q1(e)}`, `-path ${q1(e + '/*')}`])].join(' -o ');
   const findAide = aidePaths.length
     ? `find ${aidePaths.join(' ')} \\( ${prune} \\) -prune -o -type f -print 2>/dev/null | head -n ${AIDE_FILE_MAX} | while read -r f; do printf '%s %s\\n' "$(_shaf "$f")" "$f"; done`
     : 'true';

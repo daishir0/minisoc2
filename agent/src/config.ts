@@ -16,7 +16,7 @@ export interface AgentConfig {
   pythonEnvs?: string[]; // shared Python environments to inventory (default: Anaconda/Miniconda envs)
   aide: boolean; // AIDE-style file-integrity scan (hash watched system paths each run)
   aidePaths?: string[]; // paths to hash (default: security-relevant system dirs); "*" allowed once
-  aideExcludes?: string[]; // absolute sub-paths to skip during the integrity scan
+  aideExcludes?: string[]; // paths to skip during the integrity scan: an absolute dir (prunes its subtree) or file, or a glob (*, **, ?) e.g. **/cache, **/*.log
 }
 
 export const DEFAULT_SKIP_DIRS = [
