@@ -20,7 +20,8 @@ export default async function Home() {
             (SELECT count(*) FROM hosts WHERE NOT disabled) AS hosts,
             (SELECT count(*) FROM systems WHERE exposure <> 'unknown') AS exposed,
             (SELECT count(*) FROM alerts WHERE kind='log' AND status='open' AND created_at > now() - interval '24 hours') AS logthreat,
-            (SELECT count(*) FROM change_events WHERE kind='host_state' AND important AND title LIKE '%監視ファイル%' AND ts > now() - interval '7 days') AS filechange`,
+            -- File integrity shown as the latest daily snapshot's day-over-day diff (max 1 day), details on /integrity.
+            (SELECT count(*) FROM host_file_day WHERE day=(SELECT max(day) FROM host_file_day) AND sev IN ('critical','high')) AS filechange`,
   );
   const tasks = (await listTasks()).filter((x) => x.status !== 'hold' || x.overdue);
   const det = await openDetections(5);
@@ -99,7 +100,7 @@ export default async function Home() {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <Stat label="脆弱性（KEV・緊急）" value={nKev + nCrit || '—'} href="/findings" tone={nKev + nCrit ? 'text-red-600' : 'text-muted'} />
           <Stat label="ログ脅威（24時間）" value={nLog || '—'} href="/logs" tone={nLog ? 'text-orange-500' : 'text-muted'} />
-          <Stat label="ファイル改ざん（7日・重要）" value={nFile || '—'} href="/integrity" tone={nFile ? 'text-red-600' : 'text-muted'} />
+          <Stat label="ファイル変化（前日比・重要）" value={nFile || '—'} href="/integrity" tone={nFile ? 'text-red-600' : 'text-muted'} />
           <Stat label={`報告停止（全${t.hosts}台）`} value={nStale || '—'} href="/hosts" tone={nStale ? 'text-orange-500' : 'text-muted'} />
         </div>
       )}

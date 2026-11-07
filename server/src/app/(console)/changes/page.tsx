@@ -9,17 +9,20 @@ import { timeline } from '@/lib/timeline';
 
 const KINDS: [string, string][] = [
   ['', 'すべての種類'], ['kev_added', 'KEV入り'], ['vuln_new', '新しい脆弱性'], ['vuln_resolved', '解消'], ['system_new', 'システム追加・基準線'],
-  ['host_state', 'ホストの変化'], ['log', 'ログの検知'], ['feed', '脆弱性情報'], ['health', '監視の健全性'], ['ops', '運用の記録'],
+  ['host_state', 'ホストの変化'], ['log', 'ログの検知'], ['feed', '脆弱性情報フィード同期'], ['ingest', 'エージェント受信'], ['health', '監視の健全性'], ['ops', '運用の記録'],
 ];
 
 export default async function ChangesPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
-  const all = sp.all === '1';
+  // This is the full activity log: by default it shows EVERYTHING in time order (feed syncs, agent data
+  // receipts, vuln changes, host/ops events). "重要のみ" narrows to the important lines (what the home
+  // page surfaces). The home page itself always calls timeline({importantOnly:true}) so it stays quiet.
+  const importantOnly = sp.imp === '1';
   const days = [7, 30, 90, 180].includes(Number(sp.days)) ? Number(sp.days) : 30;
   const hostId = sp.host && /^[0-9a-f-]{36}$/.test(sp.host) ? sp.host : undefined;
   const kind = KINDS.some(([k]) => k && k === sp.kind) ? sp.kind : undefined;
   const hosts = await q<{ id: string; name: string }>('SELECT id, name FROM hosts ORDER BY name');
-  const groups = await timeline({ days, importantOnly: !all, hostId, kind });
+  const groups = await timeline({ days, importantOnly, hostId, kind });
   return (
     <>
       <Breadcrumbs items={[CRUMB.home, { label: "検知" }]} />
@@ -29,12 +32,12 @@ export default async function ChangesPage({ searchParams }: { searchParams: Prom
         <select name="days" defaultValue={String(days)} className="input sm:w-auto">{[7, 30, 90, 180].map((d) => <option key={d} value={d}>{d}日</option>)}</select>
         <select name="host" defaultValue={hostId ?? ''} className="input sm:w-auto"><option value="">全ホスト</option>{hosts.map((h) => <option key={h.id} value={h.id}><Masked kind="host">{h.name}</Masked></option>)}</select>
         <select name="kind" defaultValue={kind ?? ''} className="input sm:w-auto">{KINDS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}</select>
-        <label className="flex items-center gap-1"><input type="checkbox" name="all" value="1" defaultChecked={all} /> 高以下・運用の記録も表示</label>
+        <label className="flex items-center gap-1"><input type="checkbox" name="imp" value="1" defaultChecked={importantOnly} /> 重要な変化だけ</label>
         <button className="btn">表示</button>
       </form>
       <p className="mb-3 text-xs text-muted">
-        {all ? 'すべての変化を表示しています。' : '重要な変化（KEV・緊急・侵入の兆候・監視の停止）だけを表示しています。'}
-        日ごとの上位5件を表示し、残りは畳んでいます。{!all && <Link className="ml-1 text-accent" href={`/changes?days=${days}&all=1`}>すべて表示</Link>}
+        {importantOnly ? '重要な変化（KEV・緊急・侵入の兆候・監視の停止）だけを表示しています。' : 'すべての活動を時系列で表示しています（脆弱性情報フィードの同期、エージェントからのデータ受信を含む）。'}
+        日ごとの上位5件を表示し、残りは畳んでいます。{importantOnly && <Link className="ml-1 text-accent" href={`/changes?days=${days}`}>すべて表示</Link>}
       </p>
       <Timeline groups={groups} days={days} perDay={5} />
     </Card>

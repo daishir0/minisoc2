@@ -229,6 +229,12 @@ export async function ingestReport(host: HostRow, r: Report): Promise<{ packages
     );
   });
 
+  // Every data push is logged to the activity timeline (quiet: important=false so it never reaches the
+  // home page, only the full /changes view). This is the "エージェントからのデータプッシュ" record.
+  await recordEvent({
+    hostId: host.id, kind: 'ingest', important: false, count: pkgs.size,
+    title: `${host.name}：データ受信（パッケージ ${pkgs.size}${r.osAdvisories?.length ? `・OS更新 ${r.osAdvisories.length}` : ''}・所要 ${(r.durationMs / 1000).toFixed(1)}秒）`,
+  });
   for (const d of diffs) {
     await recordEvent({ hostId: host.id, kind: 'host_state', important: d.severity === 'critical', title: `${host.name}：${d.title}`, detail: d.detail });
     await raiseAlert({ kind: 'state', severity: d.severity, hostId: host.id, title: `[${host.name}] ${d.title}`, detail: d.detail, dedupeKey: `state:${host.id}:${d.key}` });

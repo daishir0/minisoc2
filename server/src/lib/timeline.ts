@@ -31,7 +31,7 @@ export async function timeline(opts: { days: number; importantOnly: boolean; hos
 }
 
 export const KIND_ICON: Record<string, string> = {
-  kev_added: '🔴', vuln_new: '🆕', vuln_resolved: '✅', system_new: '🧩', host_state: '🖥', log: '📜', feed: '📡', health: '⚠️', ops: '👤',
+  kev_added: '🔴', vuln_new: '🆕', vuln_resolved: '✅', system_new: '🧩', host_state: '🖥', log: '📜', feed: '📡', health: '⚠️', ops: '👤', ingest: '📥',
 };
 
 // Days without any events between two listed days collapse into one "no change" line.

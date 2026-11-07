@@ -4,7 +4,7 @@ import { q } from './db';
 export interface ChangeEvent {
   hostId?: string | null;
   systemRoot?: string | null;
-  kind: 'vuln_new' | 'vuln_resolved' | 'kev_added' | 'system_new' | 'host_state' | 'log' | 'feed' | 'health' | 'ops';
+  kind: 'vuln_new' | 'vuln_resolved' | 'kev_added' | 'system_new' | 'host_state' | 'log' | 'feed' | 'health' | 'ops' | 'ingest';
   important: boolean; // KEV / critical / intrusion sign / monitoring health
   count?: number;
   title: string;

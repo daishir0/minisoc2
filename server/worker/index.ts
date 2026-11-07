@@ -2,8 +2,9 @@
 // Runs as its own process: `npm run worker` (systemd unit or docker compose service).
 import 'dotenv/config';
 import { notifyPending, raiseAlert } from '../src/lib/alerts';
-import { q, q1 } from '../src/lib/db';
+import { q, q1, tx } from '../src/lib/db';
 import { migrate } from './migrate';
+import { pathSeverity } from '../src/lib/fileintegrity';
 import { statfs } from 'node:fs/promises';
 import { gunzipSync } from 'node:zlib';
 import { syncKev } from '../src/lib/feeds';
@@ -41,7 +42,9 @@ async function feeds() {
   const kev = await q1<{ last_success: Date | null }>("SELECT last_success FROM feed_status WHERE name='kev'");
   if (!kev?.last_success || Date.now() - kev.last_success.getTime() > 24 * 3600_000) {
     try {
-      log(`kev synced: ${await syncKev()} entries`);
+      const n = await syncKev();
+      log(`kev synced: ${n} entries`);
+      await recordEvent({ kind: 'feed', important: false, count: n, title: `CISA KEV 同期：${n}件` });
       await q("UPDATE hosts SET needs_match=true WHERE NOT disabled AND baseline_done"); // KEV flags may change
     } catch (e) {
       log(`kev sync failed: ${errMsg(e)}`);
@@ -243,6 +246,7 @@ async function syncEpss() {
       [b.map((x) => x.cve), b.map((x) => x.score), b.map((x) => x.pct)]);
   }
   await setSetting('epss_synced_at', { at: new Date().toISOString() });
+  await recordEvent({ kind: 'feed', important: false, count: out.length, title: `EPSS 同期：${out.length}件更新（対象 ${want.size}）` });
   log(`epss: ${out.length} CVEs scored (of ${want.size} tracked)`);
 }
 
@@ -251,6 +255,7 @@ async function sigmaSync() {
   if (f?.last_success && Date.now() - f.last_success.getTime() < 7 * 24 * 3600_000) return;
   try {
     const r = await syncSigma();
+    await recordEvent({ kind: 'feed', important: false, count: r.kept, title: `SigmaHQ 同期：${r.kept}ルール（全${r.total}）` });
     log(`sigma synced: ${r.kept} rules compiled of ${r.total} linux rules`);
   } catch (e) {
     log(`sigma sync failed: ${errMsg(e)}`);
@@ -267,6 +272,57 @@ async function dailyRematch() {
     await setSetting('last_full_rematch', { date: today });
     log('daily re-match of all hosts scheduled');
   }
+}
+
+// Daily file-integrity snapshot + day-over-day diff. Once a day (at fullRematchHour) the continuous
+// baseline is captured into host_file_snap and compared against the previous capture; the net change is
+// written to host_file_day so the UI shows "what changed in the last day" at a fixed cadence (max 1 day).
+// This is the view layer; the per-report real-time alerts (fileintegrity.ts) stay for security.
+async function fileDailySnapshot() {
+  const policy = await getPolicy();
+  const now = new Date();
+  const today = now.toISOString().slice(0, 10);
+  const last = await getSetting<{ date: string }>('last_file_snapshot', { date: '' });
+  if (now.getHours() < policy.fullRematchHour || last.date === today) return;
+  const hosts = await q<{ id: string; name: string }>('SELECT id, name FROM hosts WHERE NOT disabled');
+  for (const h of hosts) {
+    const base = await q<{ path: string; sha: string }>('SELECT path, sha FROM host_file_baseline WHERE host_id=$1', [h.id]);
+    if (!base.length) continue;
+    const snap = new Map((await q<{ path: string; sha: string }>('SELECT path, sha FROM host_file_snap WHERE host_id=$1', [h.id])).map((r) => [r.path, r.sha]));
+    if (snap.size) { // skip the diff on the very first capture for a host
+      const diffs: { path: string; kind: string; sev: string }[] = [];
+      const seen = new Set<string>();
+      for (const b of base) {
+        seen.add(b.path);
+        const prev = snap.get(b.path);
+        if (prev === undefined) diffs.push({ path: b.path, kind: 'added', sev: pathSeverity(b.path) });
+        else if (prev !== b.sha) diffs.push({ path: b.path, kind: 'changed', sev: pathSeverity(b.path) });
+      }
+      for (const p of snap.keys()) if (!seen.has(p)) diffs.push({ path: p, kind: 'removed', sev: pathSeverity(p) });
+      await q('DELETE FROM host_file_day WHERE host_id=$1 AND day=$2', [h.id, today]);
+      for (let i = 0; i < diffs.length; i += 2000) {
+        const c = diffs.slice(i, i + 2000);
+        await q(
+          `INSERT INTO host_file_day(host_id, day, path, kind, sev)
+           SELECT $1, $2, * FROM unnest($3::text[], $4::text[], $5::text[])
+           ON CONFLICT (host_id, day, path) DO UPDATE SET kind=EXCLUDED.kind, sev=EXCLUDED.sev`,
+          [h.id, today, c.map((x) => x.path), c.map((x) => x.kind), c.map((x) => x.sev)],
+        );
+      }
+      if (diffs.length) log(`file-daily ${h.id.slice(0, 8)}: ${diffs.length} changes vs yesterday`);
+    }
+    // Capture today's baseline as the reference for tomorrow.
+    await tx(async (c) => {
+      await c.query('DELETE FROM host_file_snap WHERE host_id=$1', [h.id]);
+      for (let i = 0; i < base.length; i += 2000) {
+        const ch = base.slice(i, i + 2000);
+        await c.query('INSERT INTO host_file_snap(host_id, path, sha) SELECT $1, * FROM unnest($2::text[], $3::text[])', [h.id, ch.map((x) => x.path), ch.map((x) => x.sha)]);
+      }
+    });
+  }
+  await q("DELETE FROM host_file_day WHERE day < current_date - 90");
+  await setSetting('last_file_snapshot', { date: today });
+  log('file daily snapshot done');
 }
 
 async function staleHosts() {
@@ -380,6 +436,7 @@ async function tick(n: number) {
     // that turns a fresh collection into updated findings — and delay remediation showing as resolved.
     ['pollPullHosts', pollPullHosts, 5],
     ['dailyRematch', dailyRematch, 10],
+    ['fileDailySnapshot', fileDailySnapshot, 10],
     ['notify', async () => {
       const r = await notifyPending(PUBLIC_URL);
       if (r.sent || r.error) log(`notify: sent=${r.sent} skipped=${r.skipped}${r.error ? ' error=' + r.error : ''}`);
@@ -420,6 +477,7 @@ async function main() {
       }
       if (more && ++pages % 10 === 0) {
         await q('UPDATE hosts SET needs_match=true WHERE NOT disabled AND baseline_done'); // pick up new scores
+        await recordEvent({ kind: 'feed', important: false, title: `NVD スコア取り込み：${pages}ページ` });
         log(`nvd: ${pages} pages synced`);
       }
       for (let i = 0; i < (more ? NVD_DELAY_MS : 600_000) / 1000 && !stopping; i++) await new Promise((r) => setTimeout(r, 1000));
