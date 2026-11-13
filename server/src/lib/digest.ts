@@ -6,7 +6,7 @@
 import { q } from './db';
 import { sendMail } from './mail';
 import { getMail } from './settings';
-import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, opsLine, type CveRow } from './mailfmt';
+import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsLine, type CveRow } from './mailfmt';
 
 type Row = CveRow & { host_id: string; host: string };
 
@@ -23,15 +23,6 @@ export async function buildDigest(since: Date): Promise<{ subject: string; body:
      WHERE f.status='open' AND NOT h.disabled AND (f.kev OR f.severity='critical')`,
     [since],
   );
-  // per-host KEV/critical totals (for the header) + new-count among those
-  const totals = await q<{ host_id: string; kev: string; crit: string; neww: string }>(
-    `SELECT host_id,
-            count(*) FILTER (WHERE kev) AS kev,
-            count(*) FILTER (WHERE NOT kev AND severity='critical') AS crit,
-            count(*) FILTER (WHERE first_seen >= $1) AS neww
-     FROM findings WHERE status='open' AND (kev OR severity='critical') GROUP BY host_id`, [since],
-  );
-  const tot = new Map(totals.map((t) => [t.host_id, t]));
   // intrusion / monitoring, collapsed to one line per host
   const ops = await q<{ host: string; kind: string; n: string }>(
     `SELECT COALESCE(h.name, '(ホスト不明)') AS host, a.kind, count(*) AS n FROM alerts a LEFT JOIN hosts h ON h.id=a.host_id
@@ -40,26 +31,31 @@ export async function buildDigest(since: Date): Promise<{ subject: string; body:
   );
   if (!rows.length && !ops.length) return null;
 
+  // Collapse each host's findings to one entry per CVE (httpd/httpd-core/httpd-tools/… → one line),
+  // then order hosts by their most urgent CVE. Header/subject counts are CVE-level so they match the lines.
   const byHost = new Map<string, Row[]>();
   for (const r of rows) byHost.set(r.host, [...(byHost.get(r.host) ?? []), r]);
-  // hosts ordered by their most urgent finding
-  const hosts = [...byHost.entries()].sort((a, b) => Math.max(...b[1].map(cveScore)) - Math.max(...a[1].map(cveScore)));
+  const hostGroups = [...byHost.entries()]
+    .map(([host, frs]) => ({ host, host_id: frs[0].host_id, groups: groupByCve(frs).sort(cveSort) }))
+    .sort((a, b) => Math.max(...b.groups.map(cveScore)) - Math.max(...a.groups.map(cveScore)));
 
-  const grandKev = [...tot.values()].reduce((a, t) => a + Number(t.kev), 0);
-  const grandCrit = [...tot.values()].reduce((a, t) => a + Number(t.crit), 0);
+  const grandKev = hostGroups.reduce((a, h) => a + h.groups.filter((g) => g.kev).length, 0);
+  const grandCrit = hostGroups.reduce((a, h) => a + h.groups.filter((g) => !g.kev && g.severity === 'critical').length, 0);
 
   const lines: string[] = [
     '過去24時間時点の、未対応の脆弱性です（重要な順・ホストごと）。',
     '各行：深刻度 / CVE・タイトル / EPSS / 公開日（世界に明らかになった日）/ 当システムが検出した日時。',
+    '※同じCVEが複数パッケージ（例: httpd と httpd-core）に出る場合は1行にまとめています。',
     '',
   ];
-  for (const [host, frs] of hosts) {
-    const t = tot.get(frs[0].host_id);
-    const head = t ? `KEV ${t.kev}・緊急 ${t.crit}${Number(t.neww) ? `（新規 +${t.neww}）` : ''}` : '';
-    lines.push(`■ ${host}　${head}`);
-    frs.sort(cveSort).slice(0, PER_HOST).forEach((r, i) => lines.push(...cveLines(r, i)));
-    if (frs.length > PER_HOST) lines.push(`  …ほか ${frs.length - PER_HOST}件`);
-    lines.push(`  ▶ ${url}/hosts/${frs[0].host_id}`);
+  for (const { host, host_id, groups } of hostGroups) {
+    const kev = groups.filter((g) => g.kev).length;
+    const crit = groups.filter((g) => !g.kev && g.severity === 'critical').length;
+    const neww = groups.filter((g) => g.is_new).length;
+    lines.push(`■ ${host}　KEV ${kev}・緊急 ${crit}${neww ? `（新規 +${neww}）` : ''}`);
+    groups.slice(0, PER_HOST).forEach((r, i) => lines.push(...cveLines(r, i)));
+    if (groups.length > PER_HOST) lines.push(`  …ほか ${groups.length - PER_HOST}件`);
+    lines.push(`  ▶ ${url}/hosts/${host_id}`);
     lines.push('');
   }
   if (ops.length) {

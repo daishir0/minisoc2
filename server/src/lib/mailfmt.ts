@@ -6,6 +6,7 @@ import { riskScore } from './risk';
 export interface CveRow {
   vuln_id: string; pkg: string; version: string; fixed: string; severity: string; kev: boolean;
   is_new?: boolean; detected?: string | null; summary?: string | null; published?: string | null; epss?: number | null; pub?: boolean;
+  pkgs?: string[]; // set by groupByCve: all packages this CVE+fix affects on the host (collapses httpd/httpd-core/… into one line)
 }
 
 const SEV_LABEL: Record<string, string> = { critical: '緊急', high: '高', medium: '中', low: '低' };
@@ -28,6 +29,24 @@ export const cveSort = (a: CveRow, b: CveRow) => cveScore(b) - cveScore(a) || Nu
 const daysAgo = (d: string | null) => (d ? Math.max(0, Math.round((Date.now() - new Date(d + 'T00:00:00Z').getTime()) / 86400_000)) : null);
 const cveId = (v: string) => v.replace(/^(UBUNTU|DEBIAN)-/, '');
 
+// Collapse rows that are the SAME CVE with the SAME fix target into one entry, gathering the affected
+// package names (e.g. httpd / httpd-core / httpd-filesystem / httpd-tools from one source RPM → one line).
+// is_new is OR-ed; the first row supplies the shared CVE metadata (severity/kev/epss/published/version).
+export function groupByCve(rows: CveRow[]): CveRow[] {
+  const by = new Map<string, CveRow>();
+  for (const r of rows) {
+    const key = `${cveId(r.vuln_id)}|${r.fixed ?? ''}`;
+    const g = by.get(key);
+    if (!g) by.set(key, { ...r, pkgs: [r.pkg], is_new: !!r.is_new });
+    else { if (r.pkg && !g.pkgs!.includes(r.pkg)) g.pkgs!.push(r.pkg); g.is_new = g.is_new || r.is_new; }
+  }
+  return [...by.values()];
+}
+
+// How the collapsed package set reads on the fix line.
+const pkgLabel = (pkgs: string[]) =>
+  pkgs.length <= 1 ? (pkgs[0] ?? '') : pkgs.length <= 3 ? pkgs.join(', ') : `${pkgs[0]} ほか${pkgs.length - 1}パッケージ`;
+
 // Three text lines for one CVE (number, title+epss / publish+detect / package→fix).
 export function cveLines(r: CveRow, i: number): string[] {
   const tag = `${r.kev ? 'KEV' : SEV_LABEL[r.severity] ?? r.severity}${r.is_new ? '🆕' : ''}`;
@@ -37,10 +56,11 @@ export function cveLines(r: CveRow, i: number): string[] {
   const pub = r.published ? `公開 ${r.published}${da != null ? `（${da}日前）` : ''}` : '公開日 不明';
   const epss = r.epss != null ? ` ・ EPSS ${Math.round(r.epss * 100)}%` : '';
   const fix = r.fixed ? `${r.version.split(',')[0].slice(0, 24)} → ${r.fixed.split(',')[0].slice(0, 24)}` : `${r.version.split(',')[0].slice(0, 24)}（修正版は要確認）`;
+  const pkgs = r.pkgs && r.pkgs.length ? r.pkgs : [r.pkg];
   return [
     `  ${i + 1}. [${tag}] ${cveId(r.vuln_id)}  ${title}${epss}`,
     `      ${pub}${r.detected ? ` ／ 当システム検出 ${r.detected}` : ''}`,
-    `      ${r.pkg} ${fix}`,
+    `      ${pkgLabel(pkgs)} ${fix}`,
   ];
 }
 

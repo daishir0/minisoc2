@@ -1,7 +1,7 @@
 import { q, q1 } from './db';
 import { sendMail } from './mail';
 import { getMail } from './settings';
-import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, opsLine, type CveRow } from './mailfmt';
+import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsLine, type CveRow } from './mailfmt';
 import { riskBucket } from './risk';
 
 const nul = (x: string) => x.replace(/\u0000/g, '|'); // Postgres text rejects NUL
@@ -89,7 +89,10 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
       actByHost.set(r.host, [...(actByHost.get(r.host) ?? []), r]);
     }
   }
-  const actTotal = [...actByHost.values()].reduce((a, v) => a + v.length, 0);
+  // Collapse each host's "act now" findings to one entry per CVE (same CVE across httpd/httpd-core/… → one line).
+  const actGroupsByHost = new Map([...actByHost.entries()].map(([h, frs]) =>
+    [h, { host_id: frs[0].host_id, groups: groupByCve(frs).sort(cveSort) }] as const));
+  const actTotal = [...actGroupsByHost.values()].reduce((a, v) => a + v.groups.length, 0);
   // Everything else = intrusion signals / monitoring health (stale / feed / disk / baseline / critical state).
   const others = toSend.filter((a) => a.kind !== 'kev' && a.kind !== 'vuln');
 
@@ -108,13 +111,13 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
   ];
   if (actTotal) {
     sections.push('', `■ 今すぐ対応（${actTotal}件）— 各ホストを開く → プロンプトをコピー → 実行 → 「今すぐ収集」で確認`);
-    const hostsSorted = [...actByHost.entries()].sort((a, b) => Math.max(...b[1].map(cveScore)) - Math.max(...a[1].map(cveScore)));
-    for (const [host, frs] of hostsSorted) {
-      const kev = frs.filter((f) => f.kev).length, crit = frs.filter((f) => !f.kev && f.severity === 'critical').length;
+    const hostsSorted = [...actGroupsByHost.entries()].sort((a, b) => Math.max(...b[1].groups.map(cveScore)) - Math.max(...a[1].groups.map(cveScore)));
+    for (const [host, { host_id, groups }] of hostsSorted) {
+      const kev = groups.filter((g) => g.kev).length, crit = groups.filter((g) => !g.kev && g.severity === 'critical').length;
       sections.push(`■ ${host}　KEV ${kev}・緊急 ${crit}`);
-      frs.sort(cveSort).slice(0, PER_HOST).forEach((r, i) => sections.push(...cveLines(r, i)));
-      if (frs.length > PER_HOST) sections.push(`  …ほか ${frs.length - PER_HOST}件`);
-      sections.push(`  ▶ ${publicUrl}/hosts/${frs[0].host_id}`);
+      groups.slice(0, PER_HOST).forEach((r, i) => sections.push(...cveLines(r, i)));
+      if (groups.length > PER_HOST) sections.push(`  …ほか ${groups.length - PER_HOST}件`);
+      sections.push(`  ▶ ${publicUrl}/hosts/${host_id}`);
     }
   }
   if (others.length) {
