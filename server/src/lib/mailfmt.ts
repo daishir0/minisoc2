@@ -29,16 +29,21 @@ export const cveSort = (a: CveRow, b: CveRow) => cveScore(b) - cveScore(a) || Nu
 const daysAgo = (d: string | null) => (d ? Math.max(0, Math.round((Date.now() - new Date(d + 'T00:00:00Z').getTime()) / 86400_000)) : null);
 const cveId = (v: string) => v.replace(/^(UBUNTU|DEBIAN)-/, '');
 
-// Collapse rows that are the SAME CVE with the SAME fix target into one entry, gathering the affected
-// package names (e.g. httpd / httpd-core / httpd-filesystem / httpd-tools from one source RPM → one line).
-// is_new is OR-ed; the first row supplies the shared CVE metadata (severity/kev/epss/published/version).
+// Collapse all rows of the SAME CVE into one entry, gathering every affected package name so a CVE that
+// touches httpd / httpd-core / httpd-filesystem / httpd-tools / mod_http2 / mod_ssl shows as ONE line.
+// is_new is OR-ed; the highest-priority row supplies the shared CVE metadata and the shown version→fix
+// (packages of one CVE almost always share the fix; any epoch/version nuance is on the host page).
 export function groupByCve(rows: CveRow[]): CveRow[] {
   const by = new Map<string, CveRow>();
   for (const r of rows) {
-    const key = `${cveId(r.vuln_id)}|${r.fixed ?? ''}`;
+    const key = cveId(r.vuln_id);
     const g = by.get(key);
     if (!g) by.set(key, { ...r, pkgs: [r.pkg], is_new: !!r.is_new });
-    else { if (r.pkg && !g.pkgs!.includes(r.pkg)) g.pkgs!.push(r.pkg); g.is_new = g.is_new || r.is_new; }
+    else {
+      if (r.pkg && !g.pkgs!.includes(r.pkg)) g.pkgs!.push(r.pkg);
+      g.is_new = g.is_new || r.is_new;
+      if (cveScore(r) > cveScore(g)) { g.severity = r.severity; g.kev = r.kev; g.version = r.version; g.fixed = r.fixed; }
+    }
   }
   return [...by.values()];
 }
