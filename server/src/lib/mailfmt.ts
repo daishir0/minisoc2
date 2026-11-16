@@ -69,8 +69,39 @@ export function cveLines(r: CveRow, i: number): string[] {
   ];
 }
 
+// Watched-CVE detections: a single watched CVE often spans many packages (a kernel CVE hits linux-aws,
+// linux-image, linux-headers, linux-modules, linux-tools…). Collapse to ONE line per host × CVE with the
+// affected-package summary and a link — instead of an opaque "watch 11" count. Parses the alert titles
+// ("[host] 監視中のCVEを検出：CVE-… （pkg ver）" / "… が解消されました"), so it needs no extra schema.
+export interface WatchAlert { host: string; host_id: string | null; title: string; }
+const PKG_RE = /^[A-Za-z0-9][A-Za-z0-9._+:-]*$/;
+export function watchSection(alerts: WatchAlert[], publicUrl: string): string[] {
+  const byHost = new Map<string, Map<string, { pkgs: Set<string>; resolved: boolean; host_id: string | null }>>();
+  for (const a of alerts) {
+    const cve = (a.title.match(/CVE-\d{4}-\d+/) ?? ['(CVE不明)'])[0];
+    const inParen = (a.title.match(/（([^（）]+)）/) ?? [])[1];
+    const pkg = inParen ? inParen.split(/\s+/)[0] : '';
+    const m = byHost.get(a.host) ?? new Map();
+    const w = m.get(cve) ?? { pkgs: new Set<string>(), resolved: false, host_id: a.host_id };
+    if (pkg && PKG_RE.test(pkg)) w.pkgs.add(pkg);
+    if (/解消され/.test(a.title)) w.resolved = true;
+    m.set(cve, w); byHost.set(a.host, m);
+  }
+  const out: string[] = ['', '■ ウォッチ登録したCVEの検出（CVE単位・複数パッケージはまとめ）'];
+  for (const [host, cves] of byHost) {
+    for (const [cve, w] of cves) {
+      const pk = w.pkgs.size ? `（${pkgLabel([...w.pkgs])}）` : '';
+      out.push(`  ・${host}：${cve} ${w.resolved ? '解消' : 'を検出'}${pk}`);
+      // Land on this host's findings for exactly this CVE (all=1 bypasses the KEV/緊急-only default,
+      // since watched CVEs are often 高 or below).
+      if (w.host_id) out.push(`      ▶ ${publicUrl}/findings?host=${w.host_id}&q=${cve}&all=1`);
+    }
+  }
+  return out;
+}
+
 // Host-wide monitoring / intrusion signals, one line per host (kind counts).
-const OPS_KIND: Record<string, string> = { state: 'ホスト状態の変化', log: 'ログ脅威', stale: '報告停止', feed: 'フィード', disk: 'ディスク', agent: 'エージェント', baseline: '基準線' };
+const OPS_KIND: Record<string, string> = { state: 'ホスト状態の変化', log: 'ログ脅威', stale: '報告停止', feed: 'フィード', disk: 'ディスク', agent: 'エージェント', baseline: '基準線', watch: 'ウォッチ中CVE' };
 export function opsLine(host: string, kinds: { kind: string; n: number }[]): string {
   return `  ・${host}：${kinds.map((k) => `${OPS_KIND[k.kind] ?? k.kind} ${k.n}`).join('・')}`;
 }

@@ -1,7 +1,7 @@
 import { q, q1 } from './db';
 import { sendMail } from './mail';
 import { getMail } from './settings';
-import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsLine, type CveRow } from './mailfmt';
+import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsLine, watchSection, type CveRow } from './mailfmt';
 import { riskBucket } from './risk';
 
 const nul = (x: string) => x.replace(/\u0000/g, '|'); // Postgres text rejects NUL
@@ -93,12 +93,16 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
   const actGroupsByHost = new Map([...actByHost.entries()].map(([h, frs]) =>
     [h, { host_id: frs[0].host_id, groups: groupByCve(frs).sort(cveSort) }] as const));
   const actTotal = [...actGroupsByHost.values()].reduce((a, v) => a + v.groups.length, 0);
-  // Everything else = intrusion signals / monitoring health (stale / feed / disk / baseline / critical state).
-  const others = toSend.filter((a) => a.kind !== 'kev' && a.kind !== 'vuln');
+  // Watched-CVE detections are a vulnerability signal (one watched CVE often spans many packages), so they
+  // get their own aggregated section — not the opaque "watch N" count in the monitoring bucket.
+  const rest = toSend.filter((a) => a.kind !== 'kev' && a.kind !== 'vuln');
+  const watches = rest.filter((a) => a.kind === 'watch');
+  const health = rest.filter((a) => a.kind !== 'watch');
+  const watchCves = new Set(watches.map((a) => (a.title.match(/CVE-\d{4}-\d+/) ?? ['?'])[0])).size;
 
   // Nothing above the 緊急 bar to show (e.g. a triggering alert whose findings are all "高" or below,
   // which the body now excludes): don't send an empty mail — just mark the alerts handled.
-  if (!actTotal && !others.length) {
+  if (!actTotal && !watches.length && !health.length) {
     await q("UPDATE alerts SET notified_at=now(), notify_error='緊急・KEVなし（メール対象外）' WHERE id = ANY($1::bigint[])", [toSend.map((a) => a.id)]);
     return { sent: 0, skipped: pending.length };
   }
@@ -120,10 +124,13 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
       sections.push(`  ▶ ${publicUrl}/hosts/${host_id}`);
     }
   }
-  if (others.length) {
+  if (watches.length) {
+    sections.push(...watchSection(watches.map((a) => ({ host: a.host_name ?? '(ホスト不明)', host_id: a.host_id, title: a.title })), publicUrl));
+  }
+  if (health.length) {
     sections.push('', '■ 要確認（侵入の兆候・監視の停止など）');
     const opByHost = new Map<string, Map<string, number>>();
-    for (const a of others) {
+    for (const a of health) {
       const h = a.host_name ?? '(ホスト不明)';
       const m = opByHost.get(h) ?? new Map<string, number>();
       m.set(a.kind, (m.get(a.kind) ?? 0) + 1);
@@ -140,7 +147,9 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
   );
   const subject = actTotal
     ? `[minisoc2] 今すぐ対応 ${actTotal}件${kevN ? `（KEV ${kevN}含む）` : ''}`
-    : `[minisoc2] 監視通知 ${others.length}件`;
+    : watchCves
+    ? `[minisoc2] ウォッチ中CVE ${watchCves}件を検出${health.length ? `・監視通知 ${health.length}件` : ''}`
+    : `[minisoc2] 監視通知 ${health.length}件`;
   const body = sections.filter((x, i, arr) => !(x === '' && arr[i - 1] === '')).join('\n');
   try {
     await sendMail(subject.slice(0, 200), body);
