@@ -470,7 +470,7 @@ async function tick(n: number) {
     }, 1],
     ['housekeeping', housekeeping, 360],
     ['logRetention', logRetention, 60],
-    ['watchUpstreamFix', watchUpstreamFix, 720],
+    ['watchUpstreamFix', watchUpstreamFix, 180],
     ['diskGuard', diskGuard, 10],
     ['logSpikes', logSpikes, 30],
     ['digest', digest, 5],
