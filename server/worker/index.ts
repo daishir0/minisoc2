@@ -10,7 +10,7 @@ import { gunzipSync } from 'node:zlib';
 import { syncKev } from '../src/lib/feeds';
 import { syncSigma } from '../src/lib/sigma';
 import { pollPull } from '../src/lib/pullssh';
-import { lookupCve } from '../src/lib/cvelookup';
+import { fetchExternal, lookupCve } from '../src/lib/cvelookup';
 import { dropOldPartitions, ensurePartition } from '../src/lib/logs';
 import { matchHost } from '../src/lib/match';
 import { recordEvent } from '../src/lib/events';
@@ -374,6 +374,33 @@ async function logRetention() {
   await ensurePartition(new Date(Date.now() + 86400_000).toISOString().slice(0, 10));
 }
 
+// Watched CVEs the user cares about that do NOT currently affect any host (so the per-host watch-fixable
+// alert never fires): poll the upstream advisory sources and e-mail once when a fix is published, so the
+// user still hears "the thing you're watching now has a patch". fetchExternal() does not touch cve_lookups,
+// so this background poll never pollutes the /explore recent-lookups list.
+async function watchUpstreamFix() {
+  const watched = await q<{ cve: string }>('SELECT cve FROM watch_cves');
+  for (const { cve } of watched) {
+    const open = await q1<{ n: string }>(
+      "SELECT count(*) AS n FROM findings f WHERE f.status='open' AND (f.vuln_id=$1 OR EXISTS (SELECT 1 FROM vulns v WHERE v.id=f.vuln_id AND $1 = ANY(v.aliases)))", [cve]);
+    if (Number(open?.n ?? 0) > 0) continue; // host-impacting → handled by the per-host watch-fixable alert
+    let fix: { name: string; patched: string } | undefined;
+    try {
+      const ext = await fetchExternal(cve);
+      const p = ext.ghsa.flatMap((g) => g.packages).find((x) => x.patched);
+      if (p?.patched) fix = { name: p.name, patched: p.patched };
+    } catch { continue; }
+    if (fix) {
+      await raiseAlert({
+        kind: 'watch', severity: 'high', hostId: null,
+        title: `監視中CVE ${cve} に対処可能：上流で修正が公開されました（${fix.name} → ${fix.patched}）`,
+        detail: '関心登録されたCVEです（現在どのホストにも影響は検出されていません）。',
+        dedupeKey: `watch-upstream-fix:${cve}:${fix.patched}`,
+      });
+    }
+  }
+}
+
 // Disk guard: above the threshold, raw logs are not stored (rules and aggregates keep running).
 async function diskGuard() {
   const policy = await getPolicy();
@@ -443,6 +470,7 @@ async function tick(n: number) {
     }, 1],
     ['housekeeping', housekeeping, 360],
     ['logRetention', logRetention, 60],
+    ['watchUpstreamFix', watchUpstreamFix, 720],
     ['diskGuard', diskGuard, 10],
     ['logSpikes', logSpikes, 30],
     ['digest', digest, 5],

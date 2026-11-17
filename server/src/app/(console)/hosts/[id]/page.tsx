@@ -115,6 +115,10 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   const osK = osSplit.find((r) => r.kind === 'kernel');
   const osO = osSplit.find((r) => r.kind === 'other');
   const osHref = osRow.sid ? `/systems/${osRow.sid}` : `/actions/${taskKey(h.id, '__os__')}`;
+  // Actionable-now banner: OS findings whose fix is released ("上げれば直る"), surfaced right after a
+  // collection so a freshly-published patch/kernel update is obvious. watch_cves matches are highlighted.
+  const fixAvail = Number((await q<{ n: string }>("SELECT count(*) AS n FROM host_os_status WHERE host_id=$1 AND status='released'", [id]))[0].n);
+  const watchFixAvail = Number((await q<{ n: string }>("SELECT count(*) AS n FROM host_os_status s JOIN watch_cves w ON w.cve=s.vuln_id WHERE s.host_id=$1 AND s.status='released'", [id]))[0].n);
   // Per-unit (system_root) daily severity series — for the unit-card sparklines and their enlarge overlay.
   const unitSeries = await q<{ root: string; day: string; kev: string; critical: string; high: string; medium: string; low: string }>(
     `SELECT system_root AS root, to_char(day, 'YYYY-MM-DD') AS day, sum(kev) AS kev, sum(critical) AS critical, sum(high) AS high, sum(medium) AS medium, sum(low) AS low
@@ -130,6 +134,13 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
   return (
     <>
       <Breadcrumbs items={[CRUMB.home, CRUMB.assets, CRUMB.hosts, { label: h.name, mask: 'host' }]} />
+      {fixAvail > 0 && (
+        <Link href={osHref} className="flex flex-wrap items-center gap-2 rounded-md border border-green-500 bg-green-50 px-3 py-2 text-sm text-green-800 hover:bg-green-100 dark:bg-green-950 dark:text-green-200 dark:hover:bg-green-900">
+          <span className="text-base">✅</span>
+          <span><b>適用可能な修正が {fixAvail} 件</b>あります（上げれば直る）{watchFixAvail > 0 && <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[11px] text-white">うち関心CVE {watchFixAvail}</span>}</span>
+          <span className="ml-auto text-xs underline">対処へ →</span>
+        </Link>
+      )}
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-xl font-semibold"><Masked kind="host">{h.name}</Masked></h1>
         {h.kind === 'pull' && <span className="rounded bg-indigo-600 px-2 py-0.5 text-xs text-white">プル型（SSH）</span>}

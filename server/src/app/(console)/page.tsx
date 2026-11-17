@@ -3,6 +3,7 @@ import { Masked, MaskFree } from '@/components/Mask';
 import { Timeline } from '@/components/Timeline';
 import { TrendChart } from '@/components/TrendChart';
 import { Card, Stat } from '@/components/ui';
+import { FleetOps } from '@/components/FleetOps';
 import { q } from '@/lib/db';
 import { getMail, getSetting } from '@/lib/settings';
 import { EXPOSURE } from '@/lib/systemmeta';
@@ -57,6 +58,10 @@ export default async function Home() {
 
   return (
     <>
+      <div className="flex flex-wrap items-center gap-3">
+        <h1 className="mr-auto text-xl font-semibold">ホーム</h1>
+        <FleetOps />
+      </div>
       {showOnboarding && (
         <Card title="はじめに" right={<form action={dismissOnboarding}><button className="text-xs text-muted">閉じる</button></form>}>
           <ol className="space-y-2 text-sm">

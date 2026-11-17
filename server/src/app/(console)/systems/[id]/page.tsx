@@ -84,6 +84,10 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
   const aideP = `${hinfo?.agent_meta?.root ? 'sudo ' : ''}${hinfo?.agent_meta?.invoke ?? 'minisoc2-agent'}`;
   const aideAddCmd = `${aideP} config --aide-paths ${[...new Set([...aidePaths, s.root])].join(',')} && ${aideP} run`;
 
+  // Actionable-now banner (host-wide OS fixes whose update is released). Shown after a collection so a
+  // freshly-published patch/kernel update is obvious here too; watch_cves matches are highlighted.
+  const sysFixAvail = Number((await q<{ n: string }>("SELECT count(*) AS n FROM host_os_status WHERE host_id=$1 AND status='released'", [s.host_id]))[0].n);
+  const sysWatchFix = Number((await q<{ n: string }>("SELECT count(*) AS n FROM host_os_status hs JOIN watch_cves w ON w.cve=hs.vuln_id WHERE hs.host_id=$1 AND hs.status='released'", [s.host_id]))[0].n);
   return (
     <>
       <Breadcrumbs items={[CRUMB.home, CRUMB.assets, { label: s.host, href: `/hosts/${s.host_id}`, mask: 'host' }, { label: s.name, mask: 'system' }]} />
@@ -95,6 +99,13 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
           <ConfirmCollect hostId={s.host_id} pull={hinfo?.kind === 'pull'} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="このホストを今すぐ収集" />
         </div>
       </div>
+      {sysFixAvail > 0 && (
+        <Link href={`/hosts/${s.host_id}`} className="flex flex-wrap items-center gap-2 rounded-md border border-green-500 bg-green-50 px-3 py-2 text-sm text-green-800 hover:bg-green-100 dark:bg-green-950 dark:text-green-200 dark:hover:bg-green-900">
+          <span className="text-base">✅</span>
+          <span>このホストに<b>適用可能な修正が {sysFixAvail} 件</b>あります（上げれば直る）{sysWatchFix > 0 && <span className="ml-1 rounded bg-red-600 px-1.5 py-0.5 text-[11px] text-white">うち関心CVE {sysWatchFix}</span>}</span>
+          <span className="ml-auto text-xs underline">ホストの対処へ →</span>
+        </Link>
+      )}
       {saved && (
         <div className="rounded-md border border-green-500 bg-green-50 px-3 py-2 text-sm text-green-700 dark:bg-green-950 dark:text-green-200">
           保存しました。登録済みプロジェクトとして評価対象になります（次回の照合から反映）。
