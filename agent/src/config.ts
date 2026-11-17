@@ -30,6 +30,9 @@ export const DEFAULT_SKIP_DIRS = [
 
 export const DEFAULT_LOG_FILES = [
   '/var/log/auth.log', '/var/log/secure', '/var/log/fail2ban.log',
+  // auditd SYSCALL records (0600 root; read when the agent runs as root). The server's `auditd_watch`
+  // rule keys off `key="soc_*"/"minisoc2_*"` so only the targeted watches surface, not all of auditd.
+  '/var/log/audit/audit.log',
   '/var/log/httpd/*access_log', '/var/log/httpd/*access.log', '/var/log/apache2/*access.log', '/var/log/nginx/*access.log',
 ];
 

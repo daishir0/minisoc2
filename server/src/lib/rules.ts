@@ -89,6 +89,10 @@ export const RULES: LogRule[] = [
     title: 'auditd の監視キーに一致する変更',
     severity: 'medium',
     pattern: /type=SYSCALL.* key="?(?<g>soc_[a-z_]+|minisoc2_[a-z_]+)"?/,
+    // Ignore the OS's own maintenance re-asserting permissions on watched paths: systemd-tmpfiles runs
+    // with no login user (auid unset = 4294967295 / -1) and only applies static tmpfiles.d rules, so it
+    // cannot inject content an attacker controls. A real change by a user/other program still alerts.
+    test: (_m, line) => !(/\bauid=(?:4294967295|-1)\b/.test(line) && /systemd-tmpfiles/.test(line)),
   },
   {
     id: 'kernel_segfault',
