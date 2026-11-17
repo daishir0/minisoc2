@@ -91,6 +91,9 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
         <h1 className="text-xl font-semibold"><Masked kind="system">{s.name}</Masked></h1>
         {s.ignored && <span className="rounded bg-slate-500 px-2 py-0.5 text-xs text-white">除外中</span>}
         <span className="text-sm text-muted"><Masked kind="host">{s.host}</Masked> · {s.root === '__os__' ? 'OSのパッケージマネージャ' : <span className="break-all font-mono"><Masked kind="path">{s.root}</Masked></span>}</span>
+        <div className="ml-auto">
+          <ConfirmCollect hostId={s.host_id} pull={hinfo?.kind === 'pull'} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="このホストを今すぐ収集" />
+        </div>
       </div>
       {saved && (
         <div className="rounded-md border border-green-500 bg-green-50 px-3 py-2 text-sm text-green-700 dark:bg-green-950 dark:text-green-200">
@@ -101,10 +104,6 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
           </div>
         </div>
       )}
-      <Card title="今すぐ収集">
-        <p className="mb-2 text-sm text-muted">このホスト（<Masked kind="host">{s.host}</Masked>）を今すぐ収集します（収集はホスト単位なので配下の全システム・OSに反映）。対処後の確認にも使えます。</p>
-        <ConfirmCollect hostId={s.host_id} pull={hinfo?.kind === 'pull'} online={wsOnline} lastSeenAt={hinfo?.last_seen_at ? new Date(hinfo.last_seen_at).toISOString() : null} label="このホストを今すぐ収集" />
-      </Card>
       {s.root !== '__os__' && (
         <Card title="このシステムに影響する脆弱性（KEV・緊急）">
           <ul className="divide-y divide-line text-sm">
