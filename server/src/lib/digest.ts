@@ -6,7 +6,7 @@
 import { q } from './db';
 import { sendMail } from './mail';
 import { getMail } from './settings';
-import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsLine, type CveRow } from './mailfmt';
+import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsSection, type CveRow } from './mailfmt';
 
 type Row = CveRow & { host_id: string; host: string };
 
@@ -23,11 +23,14 @@ export async function buildDigest(since: Date): Promise<{ subject: string; body:
      WHERE f.status='open' AND NOT h.disabled AND (f.kev OR f.severity='critical')`,
     [since],
   );
-  // intrusion / monitoring, collapsed to one line per host
-  const ops = await q<{ host: string; kind: string; n: string }>(
-    `SELECT COALESCE(h.name, '(ホスト不明)') AS host, a.kind, count(*) AS n FROM alerts a LEFT JOIN hosts h ON h.id=a.host_id
+  // intrusion / monitoring: per host × kind, with a representative (latest) title and a link so the
+  // reader can see WHAT happened and jump to the host's detail page to act.
+  const ops = await q<{ host: string; host_id: string | null; kind: string; n: number; title: string | null }>(
+    `SELECT COALESCE(h.name, '(ホスト不明)') AS host, a.host_id, a.kind, count(*)::int AS n,
+            (array_agg(a.title ORDER BY a.created_at DESC))[1] AS title
+     FROM alerts a LEFT JOIN hosts h ON h.id=a.host_id
      WHERE a.status='open' AND a.kind IN ('state','log','stale','feed','disk','agent') AND a.created_at >= $1
-     GROUP BY h.name, a.kind ORDER BY h.name`, [since],
+     GROUP BY h.name, a.host_id, a.kind ORDER BY h.name`, [since],
   );
   if (!rows.length && !ops.length) return null;
 
@@ -59,10 +62,7 @@ export async function buildDigest(since: Date): Promise<{ subject: string; body:
     lines.push('');
   }
   if (ops.length) {
-    lines.push('■ 要確認（侵入の兆候・監視の停止など）');
-    const opByHost = new Map<string, { kind: string; n: number }[]>();
-    for (const o of ops) opByHost.set(o.host, [...(opByHost.get(o.host) ?? []), { kind: o.kind, n: Number(o.n) }]);
-    for (const [host, kinds] of opByHost) lines.push(opsLine(host, kinds));
+    lines.push(...opsSection(ops.map((o) => ({ host: o.host, host_id: o.host_id, kind: o.kind, n: Number(o.n), title: o.title })), url));
     lines.push('');
   }
   lines.push('――――――', `今日やること（優先度順）: ${url}/`, `すべての対応: ${url}/actions`);

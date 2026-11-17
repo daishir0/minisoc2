@@ -100,8 +100,26 @@ export function watchSection(alerts: WatchAlert[], publicUrl: string): string[] 
   return out;
 }
 
-// Host-wide monitoring / intrusion signals, one line per host (kind counts).
+// Host-wide monitoring / intrusion signals. Grouped per host, each kind on its own line with a
+// representative (latest) title so the reader sees WHAT happened, plus a link to the host's detail
+// page so it is actionable (the old format was just an opaque "ログ脅威 1" count with no link).
 const OPS_KIND: Record<string, string> = { state: 'ホスト状態の変化', log: 'ログ脅威', stale: '報告停止', feed: 'フィード', disk: 'ディスク', agent: 'エージェント', baseline: '基準線', watch: 'ウォッチ中CVE' };
-export function opsLine(host: string, kinds: { kind: string; n: number }[]): string {
-  return `  ・${host}：${kinds.map((k) => `${OPS_KIND[k.kind] ?? k.kind} ${k.n}`).join('・')}`;
+export interface OpsItem { host: string; host_id: string | null; kind: string; n: number; title?: string | null; }
+export function opsSection(items: OpsItem[], publicUrl: string): string[] {
+  const byHost = new Map<string, { host_id: string | null; kinds: OpsItem[] }>();
+  for (const it of items) {
+    const g = byHost.get(it.host) ?? { host_id: it.host_id, kinds: [] };
+    if (!g.host_id && it.host_id) g.host_id = it.host_id;
+    g.kinds.push(it); byHost.set(it.host, g);
+  }
+  const out: string[] = ['', '■ 要確認（侵入の兆候・監視の停止など）'];
+  for (const [host, g] of byHost) {
+    out.push(`  ・${host}${g.host_id ? `　詳細 ▶ ${publicUrl}/hosts/${g.host_id}` : ''}`);
+    for (const k of g.kinds) {
+      const label = OPS_KIND[k.kind] ?? k.kind;
+      const t = (k.title ?? '').replace(/\s+/g, ' ').replace(/^\[[^\]]+\]\s*/, '').trim(); // drop leading [host] prefix
+      out.push(`      - ${label} ×${k.n}${t ? `：${t.length > 72 ? t.slice(0, 72) + '…' : t}` : ''}`);
+    }
+  }
+  return out;
 }

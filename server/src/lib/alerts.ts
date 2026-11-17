@@ -1,7 +1,7 @@
 import { q, q1 } from './db';
 import { sendMail } from './mail';
 import { getMail } from './settings';
-import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsLine, watchSection, type CveRow } from './mailfmt';
+import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsSection, watchSection, type CveRow } from './mailfmt';
 import { riskBucket } from './risk';
 
 const nul = (x: string) => x.replace(/\u0000/g, '|'); // Postgres text rejects NUL
@@ -128,15 +128,18 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
     sections.push(...watchSection(watches.map((a) => ({ host: a.host_name ?? '(ホスト不明)', host_id: a.host_id, title: a.title })), publicUrl));
   }
   if (health.length) {
-    sections.push('', '■ 要確認（侵入の兆候・監視の停止など）');
-    const opByHost = new Map<string, Map<string, number>>();
+    // Group by host × kind, keeping a count and the latest title, so the mail says WHAT happened and links out.
+    const agg = new Map<string, { host: string; host_id: string | null; kind: string; n: number; title: string | null }>();
     for (const a of health) {
-      const h = a.host_name ?? '(ホスト不明)';
-      const m = opByHost.get(h) ?? new Map<string, number>();
-      m.set(a.kind, (m.get(a.kind) ?? 0) + 1);
-      opByHost.set(h, m);
+      const host = a.host_name ?? '(ホスト不明)';
+      const key = `${host}|${a.kind}`;
+      const g = agg.get(key);
+      if (!g) agg.set(key, { host, host_id: a.host_id, kind: a.kind, n: 1, title: a.title });
+      else g.n += 1; // pending list is ordered by created_at, so the first seen is the latest? ordered ASC → keep last
     }
-    for (const [host, kinds] of opByHost) sections.push(opsLine(host, [...kinds.entries()].map(([kind, n]) => ({ kind, n }))));
+    // pending is ordered created_at ASC; refresh title to the most recent per group
+    for (const a of health) { const g = agg.get(`${a.host_name ?? '(ホスト不明)'}|${a.kind}`); if (g) g.title = a.title; }
+    sections.push(...opsSection([...agg.values()], publicUrl));
   }
   sections.push(
     '',

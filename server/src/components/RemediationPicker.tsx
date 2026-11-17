@@ -61,6 +61,13 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
   // from picks) can lag a few seconds, especially on pull hosts, so we don't wait for it.
   const [hidden, setHidden] = useState<Set<string>>(new Set());
   const visible = findings.filter((f) => !hidden.has(f.id));
+  // Collapse the whole group (list + "not affected" controls + prompt) unless it has something urgent
+  // (KEV / critical). No urgent items → there is nothing to act on now, so keep it folded and quiet;
+  // the summary still shows the counts so lower-severity items are discoverable by expanding.
+  const kevN0 = findings.filter((f) => f.kev).length;
+  const critN0 = findings.filter((f) => !f.kev && f.severity === 'critical').length;
+  const hasUrgent = kevN0 + critN0 > 0;
+  const [open, setOpen] = useState(hasUrgent);
 
   const markNotAffected = () => {
     const ids = [...sel];
@@ -338,18 +345,22 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
     </div>
   );
 
+  const urgentParts = [kevN0 ? `KEV ${kevN0}` : '', critN0 ? `緊急 ${critN0}` : ''].filter(Boolean).join('・');
   return (
-    <div className="space-y-3">
-      {title && <h3 className="text-sm font-semibold">{title}</h3>}
+    <details open={open} onToggle={(e) => setOpen(e.currentTarget.open)} className="rounded-lg border border-line">
+      <summary className="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2.5 text-sm font-semibold">
+        <span>{title ?? '対処候補'}</span>
+        {hasUrgent ? (
+          <span className="rounded bg-red-600 px-1.5 py-0.5 text-[11px] font-medium text-white">{urgentParts}・要対応（全{findings.length}件）</span>
+        ) : (
+          <span className="text-xs font-normal text-muted">緊急なし（全{findings.length}件・高/中/低はここを開いて確認）</span>
+        )}
+      </summary>
+      <div className="space-y-3 border-t border-line px-3 pb-3 pt-3">
       {bulk && (
-        <p className="text-xs text-muted">このOSは<b>個別に選ぶのではなく一括更新</b>が正道です。下のプロンプトをそのまま対象ホストで実行してください。対象一覧（{findings.length}件）は参考として折りたたんであります。</p>
+        <p className="text-xs text-muted">このOSは<b>個別に選ぶのではなく一括更新</b>が正道です。下のプロンプトをそのまま対象ホストで実行してください。対象一覧（{findings.length}件）は参考です。</p>
       )}
-      {bulk ? (
-        <details className="rounded border border-line p-2">
-          <summary className="cursor-pointer text-xs text-muted">対象一覧（{findings.length}件・参考）／特定パッケージを「影響なし」登録したい時もここから</summary>
-          <div className="mt-3">{listBody}</div>
-        </details>
-      ) : listBody}
+      {listBody}
       {/* On phones the CVE list is long; keep the primary copy action within thumb reach as a sticky
           bottom bar. On >=sm it returns to a normal right-aligned button. */}
       <div className="sticky bottom-0 z-10 flex justify-end border-t border-line bg-bg/95 py-2 backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:py-0 sm:backdrop-blur-none">
@@ -372,6 +383,7 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
 
       {masked && !prompt.startsWith('（') && <p className="text-[11px] text-muted">🕶 デモ用マスク中：対象ホスト名・接続先・ホストID・パスを擬名に置き換えて表示しています（コピーは解除後）。</p>}
       <pre className="max-h-96 select-all overflow-auto whitespace-pre-wrap break-words rounded bg-bg p-3 text-xs">{displayPrompt}</pre>
-    </div>
+      </div>
+    </details>
   );
 }
