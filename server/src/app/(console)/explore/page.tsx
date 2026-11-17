@@ -29,7 +29,13 @@ export default async function ExplorePage() {
           <>
             <p className="mt-4 mb-2 text-xs text-muted">最近照会した（関心のある）CVE。<span className="text-green-600">緑＝解消済</span>／<span className="text-red-600">赤＝未解消</span>／灰＝未検出。未解消・未検出はマウスオーバーで概要が出ます。</p>
             <div className="flex flex-wrap gap-2 text-sm">
-              {recent.map((r) => {
+              {[...recent]
+                .sort((a, b) => {
+                  // actionable first: 未解消(open>0) → 未検出(total 0) → 解消; then newest lookup first.
+                  const rank = (r: typeof a) => (Number(r.open_cnt) > 0 ? 0 : Number(r.total_cnt) === 0 ? 1 : 2);
+                  return rank(a) - rank(b) || new Date(b.fetched_at).getTime() - new Date(a.fetched_at).getTime();
+                })
+                .map((r) => {
                 const open = Number(r.open_cnt), total = Number(r.total_cnt);
                 const resolved = open === 0 && total > 0;
                 const sm = (r.summary ?? '').replace(/\s+/g, ' ').trim();
