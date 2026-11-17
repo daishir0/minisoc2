@@ -76,22 +76,24 @@ export function cveLines(r: CveRow, i: number): string[] {
 export interface WatchAlert { host: string; host_id: string | null; title: string; }
 const PKG_RE = /^[A-Za-z0-9][A-Za-z0-9._+:-]*$/;
 export function watchSection(alerts: WatchAlert[], publicUrl: string): string[] {
-  const byHost = new Map<string, Map<string, { pkgs: Set<string>; resolved: boolean; host_id: string | null }>>();
+  const byHost = new Map<string, Map<string, { pkgs: Set<string>; resolved: boolean; fixable: boolean; host_id: string | null }>>();
   for (const a of alerts) {
     const cve = (a.title.match(/CVE-\d{4}-\d+/) ?? ['(CVE不明)'])[0];
     const inParen = (a.title.match(/（([^（）]+)）/) ?? [])[1];
     const pkg = inParen ? inParen.split(/\s+/)[0] : '';
     const m = byHost.get(a.host) ?? new Map();
-    const w = m.get(cve) ?? { pkgs: new Set<string>(), resolved: false, host_id: a.host_id };
+    const w = m.get(cve) ?? { pkgs: new Set<string>(), resolved: false, fixable: false, host_id: a.host_id };
     if (pkg && PKG_RE.test(pkg)) w.pkgs.add(pkg);
     if (/解消され/.test(a.title)) w.resolved = true;
+    if (/対処可能/.test(a.title)) w.fixable = true;
     m.set(cve, w); byHost.set(a.host, m);
   }
   const out: string[] = ['', '■ ウォッチ登録したCVEの検出（CVE単位・複数パッケージはまとめ）'];
   for (const [host, cves] of byHost) {
     for (const [cve, w] of cves) {
       const pk = w.pkgs.size ? `（${pkgLabel([...w.pkgs])}）` : '';
-      out.push(`  ・${host}：${cve} ${w.resolved ? '解消' : 'を検出'}${pk}`);
+      const state = w.resolved ? '解消' : w.fixable ? '✅ 対処可能（修正版あり）' : 'を検出';
+      out.push(`  ・${host}：${cve} ${state}${pk}`);
       // Land on this host's findings for exactly this CVE (all=1 bypasses the KEV/緊急-only default,
       // since watched CVEs are often 高 or below).
       if (w.host_id) out.push(`      ▶ ${publicUrl}/findings?host=${w.host_id}&q=${cve}&all=1`);
