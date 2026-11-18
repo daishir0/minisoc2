@@ -196,7 +196,13 @@ export async function getSigmaRules(): Promise<LoadedSigma[]> {
   return rules;
 }
 
+// SigmaHQ linux rules target command/process/system logs. Web access logs are a different animal —
+// a URL that merely contains "curl", "wget", "nmap" etc. is not that program running on the host — and
+// are covered by minisoc2's own web rules. Never test Sigma rules against an access log.
+const ACCESS_SOURCE = /access[_.]log$/;
+
 export function matchSigma(rules: LoadedSigma[], source: string, message: string, ts: Date): Hit[] {
+  if (ACCESS_SOURCE.test(source)) return [];
   const lower = message.toLowerCase();
   const out: Hit[] = [];
   for (const r of rules) {
