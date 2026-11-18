@@ -109,9 +109,6 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
 
   const sections: string[] = [
     'minisoc2 セキュリティ通知（即時）。',
-    '悪用の可能性が高い脆弱性（KEV・EPSS高）と、侵入・監視系の重要な通知だけをお届けします。',
-    '緊急でない脆弱性は毎日の「まとめメール（ダイジェスト）」に回しています。',
-    '各行：深刻度 / CVE・タイトル / EPSS / 公開日（世界に明らかになった日）/ 当システムが検出した日時。',
   ];
   if (actTotal) {
     sections.push('', `■ 今すぐ対応（${actTotal}件）— 各ホストを開く → プロンプトをコピー → 実行 → 「今すぐ収集」で確認`);

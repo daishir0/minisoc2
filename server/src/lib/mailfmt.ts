@@ -63,7 +63,7 @@ export function cveLines(r: CveRow, i: number): string[] {
   const fix = r.fixed ? `${r.version.split(',')[0].slice(0, 24)} → ${r.fixed.split(',')[0].slice(0, 24)}` : `${r.version.split(',')[0].slice(0, 24)}（修正版は要確認）`;
   const pkgs = r.pkgs && r.pkgs.length ? r.pkgs : [r.pkg];
   return [
-    `  ${i + 1}. [${tag}] ${cveId(r.vuln_id)}  ${title}${epss}`,
+    `  ${i + 1}. [${tag}] ${cveId(r.vuln_id)}  ${title}${epss}${r.fixed ? ' ✅修正版あり' : ''}`,
     `      ${pub}${r.detected ? ` ／ 当システム検出 ${r.detected}` : ''}`,
     `      ${pkgLabel(pkgs)} ${fix}`,
   ];
