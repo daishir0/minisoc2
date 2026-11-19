@@ -81,6 +81,17 @@ export default async function IntegrityPage({ searchParams }: { searchParams: Pr
   const tracked = hosts.reduce((s, h) => s + Number(h.files), 0);
   const basepoint = (await q<{ d: string }>("SELECT value->>'date' AS d FROM settings WHERE key='last_file_snapshot'"))[0]?.d ?? null;
 
+  // The "ファイル改ざん" badge counts exactly these: important (重大/高) changes in the latest daily diff.
+  // Surface them at the very top so the badge number is immediately visible as a concrete list.
+  const impDay = (await q<{ d: string }>("SELECT to_char(max(day), 'YYYY-MM-DD') AS d FROM host_file_day"))[0]?.d ?? null;
+  const impRows: Row[] = impDay
+    ? await q<Row>(
+        `SELECT h.name AS host, d.host_id, d.path, d.kind, d.sev, d.old_sha, d.new_sha
+         FROM host_file_day d JOIN hosts h ON h.id=d.host_id
+         WHERE d.day=$1 AND d.sev IN ('critical','high')
+         ORDER BY CASE d.sev WHEN 'critical' THEN 0 ELSE 1 END, h.name, d.path`, [impDay])
+    : [];
+
   // LIVE diff: current baseline vs the daily basepoint snapshot — which files changed since the basepoint
   // and how (from the received hashes). Works as soon as a basepoint exists (no need to wait for 2 AM).
   const liveRaw = await q<{ host: string; host_id: string; path: string; old_sha: string | null; new_sha: string | null; kind: string }>(
@@ -109,6 +120,16 @@ export default async function IntegrityPage({ searchParams }: { searchParams: Pr
   return (
     <>
       <ExploreTabs />
+      <Card title={`要確認の重要なファイル変化${impDay ? `（最新 ${impDay}）` : ''}・${impRows.length}件`}>
+        {impRows.length === 0 ? (
+          <p className="text-sm text-green-600">✅ 最新の日次差分に、重要（重大・高）なファイル変化はありません。下に全変化とベースライン状態を表示しています。</p>
+        ) : (
+          <>
+            <p className="mb-3 text-xs text-muted">SSH鍵・sudoers・passwd/shadow・実行ファイル・cron・systemd など<b>重要パス</b>の変化です（最新の日次差分）。心当たりが無ければ各ホストで調査してください。</p>
+            <HostDiffList rows={impRows} />
+          </>
+        )}
+      </Card>
       <Card title="ファイル改ざん検知（AIDE相当）">
         <p className="text-sm text-muted">
           各ホストが監視対象のファイルを<b>読み取り専用</b>でハッシュ送信します。サーバーは<b>毎日同じ時刻（設定の「日次照合時刻」）に基点を1回取得</b>し、以降の変化を<b>追加 / 変更（ハッシュ前後）/ 削除</b>で示します。SSH鍵・sudoers・passwd/shadow・実行ファイル・cron・systemd の変化は重要として扱います。全{hosts.length}ホストで{tracked.toLocaleString()}ファイルを監視中。
