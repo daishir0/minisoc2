@@ -3,8 +3,12 @@ import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { MaskFree } from '@/components/Mask';
 import { Card, Sev, ago } from '@/components/ui';
+import { Masked } from '@/components/Mask';
 import { q } from '@/lib/db';
-import { alertFormAction } from '../actions';
+import { alertFormAction, trustIp } from '../actions';
+
+// Pull a trailing IP out of a log-alert title so "自分です（このIPを信頼）" can be offered inline.
+const IP_RE = /(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{0,4}:[0-9a-f:]{2,38})(?!.*\d{1,3}(?:\.\d{1,3}){3})/i;
 
 const ALERT_STATUS: Record<string, string> = { open: '重要', other: 'その他', ack: '確認済み', resolved: '解決済み' };
 const MAIL_NOTE: Record<string, string> = { 'below threshold': '通知の基準未満', 'mail disabled': 'メール通知オフ' };
@@ -53,12 +57,21 @@ export default async function AlertsPage({ searchParams }: { searchParams: Promi
                 </div>
               </div>
               </div>
-              <form action={alertFormAction} className="flex gap-1 pl-10 sm:pl-0">
-                <input type="hidden" name="id" value={a.id} />
-                {status !== 'ack' && <button name="status" value="ack" className="btn-ghost">確認済み</button>}
-                {status !== 'resolved' && <button name="status" value="resolved" className="btn-ghost">解決</button>}
-                {status !== 'open' && <button name="status" value="open" className="btn-ghost">未対応に戻す</button>}
-              </form>
+              <div className="flex flex-wrap gap-1 pl-10 sm:pl-0">
+                {a.kind === 'log' && a.title.match(IP_RE)?.[1] && status !== 'ack' && (
+                  <form action={trustIp}>
+                    <input type="hidden" name="id" value={a.id} /><input type="hidden" name="ip" value={a.title.match(IP_RE)![1]} />
+                    <button className="btn-ghost" title="このIPを既知として登録し、今後は通知しません">自分です（<Masked kind="addr">{a.title.match(IP_RE)![1]}</Masked>）</button>
+                  </form>
+                )}
+                {a.kind === 'log' && a.host_id && <Link href={`/logs?host=${a.host_id}`} className="btn-ghost">調べる</Link>}
+                <form action={alertFormAction} className="flex gap-1">
+                  <input type="hidden" name="id" value={a.id} />
+                  {status !== 'ack' && <button name="status" value="ack" className="btn-ghost">確認済み</button>}
+                  {status !== 'resolved' && <button name="status" value="resolved" className="btn-ghost">解決</button>}
+                  {status !== 'open' && <button name="status" value="open" className="btn-ghost">未対応に戻す</button>}
+                </form>
+              </div>
             </li>
           ))}
         </ul>

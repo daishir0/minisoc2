@@ -555,7 +555,8 @@ export async function trustIp(fd: FormData): Promise<void> {
   if (!(policy.ignoreIps ?? []).includes(ip)) await setSetting('policy', { ...policy, ignoreIps: [...(policy.ignoreIps ?? []), ip] });
   await q("UPDATE alerts SET status='ack' WHERE status='open' AND kind='log' AND title LIKE $1", [`%${ip}%`]);
   await opsEvent(`${ip} を既知のIPとして登録`);
-  revalidatePath('/actions');
+  revalidatePath('/alerts');
+  revalidatePath('/');
 }
 
 export async function dismissOnboarding(): Promise<void> {

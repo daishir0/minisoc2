@@ -39,7 +39,7 @@ export default async function TaskPage({ params, searchParams }: { params: Promi
 
   return (
     <>
-      <Breadcrumbs items={[CRUMB.home, CRUMB.actions, { label: t.host, mask: 'host' }, { label: t.root === '__os__' ? 'OS' : t.name, mask: t.root === '__os__' ? undefined : 'system' }]} />
+      <Breadcrumbs items={[CRUMB.home, CRUMB.assets, { label: t.host, mask: 'host', href: `/hosts/${k.hostId}` }, { label: t.root === '__os__' ? 'OS' : t.name, mask: t.root === '__os__' ? undefined : 'system' }]} />
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="text-xl font-semibold"><Masked kind="host">{t.host}</Masked>{t.root === '__os__' ? ' の OS を更新' : <>／<Masked kind="system">{t.name}</Masked> の依存を更新</>}</h1>
         {t.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 py-0.5 text-xs text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}

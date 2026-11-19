@@ -26,6 +26,12 @@ export default async function Home() {
   );
   const tasks = (await listTasks()).filter((x) => x.status !== 'hold' || x.overdue);
   const det = await openDetections(5);
+  // Exclusion reviews whose review date has arrived (previously only on the removed /actions page).
+  const reviews = await q<{ id: number; system_id: number; pattern: string; name: string; host: string; review: string }>(
+    `SELECT e.id, e.system_id, e.pattern, s.name, h.name AS host, to_char(e.review_date, 'YYYY-MM-DD') AS review
+     FROM system_excludes e JOIN systems s ON s.id=e.system_id JOIN hosts h ON h.id=s.host_id
+     WHERE e.review_date IS NOT NULL AND e.review_date <= current_date ORDER BY e.review_date`,
+  );
   const trend = await q<{ day: string; kev: string; critical: string; high: string; medium: string; low: string }>(
     `SELECT to_char(day, 'YYYY-MM-DD') AS day, sum(kev) AS kev, sum(critical) AS critical, sum(high) AS high, sum(medium) AS medium, sum(low) AS low FROM daily_snapshots ds
      WHERE day > current_date - 90 AND NOT EXISTS (SELECT 1 FROM systems s WHERE s.host_id=ds.host_id AND s.root=ds.system_root AND s.ignored)
@@ -76,10 +82,10 @@ export default async function Home() {
       )}
 
       {(tasks.length > 0 || det.length > 0) && (
-        <Card title="今日やる（優先度順：KEV → 公開露出 → 緊急）" right={<Link href="/actions" className="text-xs text-accent">すべての対応へ</Link>}>
+        <Card title="今日やる（優先度順：KEV → 公開露出 → 緊急）" right={<Link href="/findings" className="text-xs text-accent">未対応の脆弱性をすべて見る</Link>}>
           <ul className="divide-y divide-line">
             {det.map((d) => (
-              <li key={d.id} className="py-2 text-sm"><Link href="/actions" className="block"><span className="mr-1">⚠</span><MaskFree>{d.title}</MaskFree></Link></li>
+              <li key={d.id} className="py-2 text-sm"><Link href="/alerts" className="block"><span className="mr-1">⚠</span><MaskFree>{d.title}</MaskFree></Link></li>
             ))}
             {tasks.slice(0, 3).map((x) => (
               <li key={x.key} className="py-2">
@@ -93,9 +99,19 @@ export default async function Home() {
                 </Link>
               </li>
             ))}
-            {tasks.length > 3 && <li className="py-2 text-sm"><Link href="/actions" className="text-accent">ほか {tasks.length - 3}件の対応 →</Link></li>}
+            {tasks.length > 3 && <li className="py-2 text-sm"><Link href="/findings" className="text-accent">ほか {tasks.length - 3}件の対応（未対応の脆弱性）→</Link></li>}
           </ul>
           <p className="mt-2 text-xs text-muted">各行をタップすると、そのユニットの Claude Code 用プロンプトへ直行します。</p>
+        </Card>
+      )}
+
+      {reviews.length > 0 && (
+        <Card title={`除外の見直し（期限到来 ${reviews.length}件）`}>
+          <ul className="divide-y divide-line text-sm">
+            {reviews.map((r) => (
+              <li key={r.id} className="py-2"><Link href={`/systems/${r.system_id}`} className="text-accent"><Masked kind="host">{r.host}</Masked>／<Masked kind="system">{r.name}</Masked></Link>：<span className="font-mono">{r.pattern}</span><span className="ml-2 text-xs text-muted">期限 {r.review}</span></li>
+            ))}
+          </ul>
         </Card>
       )}
 

@@ -33,7 +33,6 @@ export const CRUMB = {
   changes: { label: '変化の履歴', href: '/changes' },
   cveLookup: { label: 'CVE照会', href: '/explore' },
   alerts: { label: 'アラート', href: '/alerts' },
-  actions: { label: '対応', href: '/actions' },
   settings: { label: '設定', href: '/settings' },
   watch: { label: 'CVE監視', href: '/watch' },
   enroll: { label: 'ホスト追加', href: '/enroll' },
