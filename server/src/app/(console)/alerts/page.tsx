@@ -4,6 +4,7 @@ import { MaskFree } from '@/components/Mask';
 import { Card, Sev, ago } from '@/components/ui';
 import { Masked } from '@/components/Mask';
 import { q } from '@/lib/db';
+import { IMPORTANT_ALERT } from '@/lib/navcounts';
 import { alertFormAction, trustIp } from '../actions';
 
 // Pull a trailing IP out of a log-alert title so "自分です（このIPを信頼）" can be offered inline.
@@ -17,8 +18,9 @@ export default async function AlertsPage({ searchParams }: { searchParams: Promi
   const { status: s } = await searchParams;
   const tab = ['open', 'other', 'ack', 'resolved'].includes(s ?? '') ? s! : 'open';
   const status = tab === 'other' ? 'open' : tab;
-  // "important" = what the policy surfaces: critical, KEV, watched CVEs, monitoring health
-  const IMPORTANT = "(severity='critical' OR kind IN ('kev','watch','stale','feed','disk'))";
+  // "important" = open monitoring / detection signals (vulnerabilities live in the 脆弱性 tab, so vuln/kev
+  // alert rows are excluded — see IMPORTANT_ALERT).
+  const IMPORTANT = `(${IMPORTANT_ALERT})`;
   const scope = tab === 'open' ? `AND ${IMPORTANT}` : tab === 'other' ? `AND NOT ${IMPORTANT}` : '';
   const rows = await q<{ id: string; kind: string; severity: string; title: string; detail: string; created_at: Date; notified_at: Date | null; notify_error: string | null; host_id: string | null }>(
     `SELECT id, kind, severity, title, detail, created_at, notified_at, notify_error, host_id FROM alerts WHERE status=$1 ${scope} ORDER BY created_at DESC LIMIT 300`,

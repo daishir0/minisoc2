@@ -363,6 +363,10 @@ async function housekeeping() {
   await q("DELETE FROM reports WHERE received_at < now() - interval '180 days'");
   await q("DELETE FROM log_batches WHERE received_at < now() - interval '180 days'");
   await q("DELETE FROM web_ip_daily WHERE day < now()::date - 35"); // per-IP transfer: short window; web_daily is kept
+  // Vulnerability alerts are one-shot e-mail triggers; the standing list is `findings`. Once an alert has
+  // been through notification, resolve it so the alerts view/badge reflect detection signals, not a growing
+  // pile of vuln rows whose findings are already fixed.
+  await q("UPDATE alerts SET status='resolved' WHERE status='open' AND kind IN ('vuln','kev') AND notified_at IS NOT NULL");
   await q('DELETE FROM sessions WHERE expires_at < now()');
 }
 
