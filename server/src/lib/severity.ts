@@ -10,6 +10,16 @@ export function atLeast(s: string, min: string): boolean {
   return sevRank(s) <= sevRank(min);
 }
 
+// Severities at or above `line` (excludes 'unknown'), for building `severity IN (...)` filters from a
+// configurable threshold. `line` is a trusted enum value, so the SQL list is a safe literal.
+export function sevAtLeastList(line: string): Severity[] {
+  return SEVERITIES.filter((s) => s !== 'unknown' && atLeast(s, line));
+}
+export function sevInSql(line: string): string {
+  const list = sevAtLeastList(line);
+  return (list.length ? list : ['critical']).map((s) => `'${s}'`).join(',');
+}
+
 export function fromScore(score: number | null): Severity {
   if (score == null) return 'unknown';
   if (score >= 9) return 'critical';

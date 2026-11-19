@@ -4,6 +4,8 @@
 import { q } from './db';
 import { recommendedTarget } from './version';
 import { riskBucket, riskScore, type Bucket } from './risk';
+import { getPolicy } from './settings';
+import { sevInSql } from './severity';
 
 export interface TaskPackage {
   name: string;
@@ -181,7 +183,7 @@ export async function listTasks(opts: { hostId?: string; root?: string } = {}): 
      LEFT JOIN pull_targets pt ON pt.host_id=h.id
      CROSS JOIN LATERAL unnest(CASE WHEN cardinality(f.systems)=0 THEN ARRAY['__os__'] ELSE f.systems END) AS sys
      LEFT JOIN systems s ON s.host_id=f.host_id AND s.root=sys
-     WHERE f.status='open' AND (f.kev OR f.severity='critical') AND NOT h.disabled AND NOT COALESCE(s.ignored, false) ${extra}`,
+     WHERE f.status='open' AND (f.kev OR f.severity IN (${sevInSql((await getPolicy()).screenLevel)})) AND NOT h.disabled AND NOT COALESCE(s.ignored, false) ${extra}`,
     params,
   );
   const state = new Map((await q<{ host_id: string; system_root: string; status: Task['status']; owner: string; due: string | null; note: string }>(

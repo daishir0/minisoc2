@@ -69,9 +69,11 @@ export async function savePolicy(_: Result, fd: FormData): Promise<Result> {
     const n = Number(fd.get(k));
     return Number.isFinite(n) ? Math.min(max, Math.max(min, Math.round(n))) : d;
   };
-  const sev = String(fd.get('notifyMinSeverity'));
+  const lvl = (k: string, d: PolicySettings['screenLevel']) => { const v = String(fd.get(k)); return (['critical', 'high', 'medium', 'low'].includes(v) ? v : d) as PolicySettings['screenLevel']; };
   const next: PolicySettings = {
-    notifyMinSeverity: (['critical', 'high', 'medium', 'low'].includes(sev) ? sev : cur.notifyMinSeverity) as PolicySettings['notifyMinSeverity'],
+    screenLevel: lvl('screenLevel', cur.screenLevel),
+    mailLevel: lvl('mailLevel', cur.mailLevel),
+    watchAlwaysImmediate: fd.get('watchAlwaysImmediate') === 'on',
     notifyKev: fd.get('notifyKev') === 'on',
     staleHours: num('staleHours', 1, 24 * 30, cur.staleHours),
     fullRematchHour: num('fullRematchHour', 0, 23, cur.fullRematchHour),

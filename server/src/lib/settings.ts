@@ -12,8 +12,15 @@ export interface MailSettings {
   to: string; // comma separated
 }
 
+export type SevLevel = 'critical' | 'high' | 'medium' | 'low';
 export interface PolicySettings {
-  notifyMinSeverity: 'critical' | 'high' | 'medium' | 'low';
+  // The "対応ライン" — the severity threshold treated as actionable. screenLevel drives what the UI
+  // surfaces as 要対応/緊急 (home, findings default, badges, host counts); mailLevel drives what is e-mailed
+  // immediately (below it goes to the daily digest). KEV is always treated as top when notifyKev is on.
+  screenLevel: SevLevel;
+  mailLevel: SevLevel;
+  watchAlwaysImmediate: boolean; // watched CVEs e-mail on any event regardless of severity (else: only a
+  // published fix is always immediate; a mere detection follows mailLevel)
   notifyKev: boolean;
   staleHours: number; // alert when a host has not reported for this long
   fullRematchHour: number; // local hour for the daily re-match of all inventories
@@ -39,7 +46,7 @@ export const DEFAULT_MAIL: MailSettings = {
 };
 
 export const DEFAULT_POLICY: PolicySettings = {
-  notifyMinSeverity: 'critical', notifyKev: true, staleHours: 26, fullRematchHour: 6, logRetentionDays: 30, diskGuardPercent: 90, ignoreIps: [], digestHour: 8, osvCacheHours: 20, defaultAllowedIps: [],
+  screenLevel: 'critical', mailLevel: 'critical', watchAlwaysImmediate: false, notifyKev: true, staleHours: 26, fullRematchHour: 6, logRetentionDays: 30, diskGuardPercent: 90, ignoreIps: [], digestHour: 8, osvCacheHours: 20, defaultAllowedIps: [],
   webReqFloor: 300, web4xxFloor: 300, web5xxFloor: 30, webSpikeMult: 3, webTransferMB: 300, fail2banBanFloor: 20,
 };
 

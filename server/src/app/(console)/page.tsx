@@ -2,10 +2,11 @@ import Link from 'next/link';
 import { Masked, MaskFree } from '@/components/Mask';
 import { Timeline } from '@/components/Timeline';
 import { TrendChart } from '@/components/TrendChart';
-import { Card, Stat } from '@/components/ui';
+import { Card, Stat, SEV_LABEL } from '@/components/ui';
 import { FleetOps } from '@/components/FleetOps';
 import { q } from '@/lib/db';
-import { getMail, getSetting } from '@/lib/settings';
+import { getMail, getPolicy, getSetting } from '@/lib/settings';
+import { sevInSql } from '@/lib/severity';
 import { EXPOSURE } from '@/lib/systemmeta';
 import { listTasks, openDetections } from '@/lib/tasks';
 import { timeline } from '@/lib/timeline';
@@ -14,9 +15,10 @@ import { dismissOnboarding } from './actions';
 
 // Home: the state of things in 30 seconds. Only KEV / critical / detections are surfaced.
 export default async function Home() {
+  const policy = await getPolicy();
   const [t] = await q<{ kev: string; critical: string; stale: string; hosts: string; exposed: string; logthreat: string; filechange: string }>(
     `SELECT (SELECT count(*) FROM findings WHERE status='open' AND kev) AS kev,
-            (SELECT count(*) FROM findings WHERE status='open' AND NOT kev AND severity='critical') AS critical,
+            (SELECT count(*) FROM findings WHERE status='open' AND NOT kev AND severity IN (${sevInSql(policy.screenLevel)})) AS critical,
             (SELECT count(*) FROM hosts WHERE stale_alerted AND NOT disabled) AS stale,
             (SELECT count(*) FROM hosts WHERE NOT disabled) AS hosts,
             (SELECT count(*) FROM systems WHERE exposure <> 'unknown') AS exposed,
@@ -119,7 +121,7 @@ export default async function Home() {
         <Card><p className="text-lg">🟢 KEV・緊急の未対応、ログ脅威、監視ファイルの重要な変化、報告停止はありません（全{t.hosts}台）。</p></Card>
       ) : (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          <Stat label="脆弱性（KEV・緊急）" value={nKev + nCrit || '—'} href="/findings" tone={nKev + nCrit ? 'text-red-600' : 'text-muted'} />
+          <Stat label={`脆弱性（KEV・${SEV_LABEL[policy.screenLevel]}以上）`} value={nKev + nCrit || '—'} href="/findings" tone={nKev + nCrit ? 'text-red-600' : 'text-muted'} />
           <Stat label="ログ脅威（24時間）" value={nLog || '—'} href="/logs" tone={nLog ? 'text-orange-500' : 'text-muted'} />
           <Stat label="ファイル変化（前日比・重要）" value={nFile || '—'} href="/integrity" tone={nFile ? 'text-red-600' : 'text-muted'} />
           <Stat label={`報告停止（全${t.hosts}台）`} value={nStale || '—'} href="/hosts" tone={nStale ? 'text-orange-500' : 'text-muted'} />

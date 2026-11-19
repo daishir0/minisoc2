@@ -4,8 +4,22 @@ import { ActionForm } from '@/components/ActionForm';
 import { Card, SEV_LABEL } from '@/components/ui';
 import { currentUser, getTotp } from '@/lib/auth';
 import { otpauthURL } from '@/lib/totp';
-import { getMail, getPolicy } from '@/lib/settings';
+import { getMail, getPolicy, type SevLevel } from '@/lib/settings';
+import { q } from '@/lib/db';
 import { confirmTotp, disableTotp2fa, saveMail, savePolicy, startTotp } from '../actions';
+
+// The action-line options, with the cumulative "how many findings this would make actionable" shown inline
+// so the impact of each choice is visible before saving.
+const LEVELS: { v: SevLevel; label: string }[] = [
+  { v: 'critical', label: '緊急（CVSS 9.0以上）' }, { v: 'high', label: '高 以上' }, { v: 'medium', label: '中 以上' }, { v: 'low', label: '低 以上（すべて）' },
+];
+function levelSelect(name: string, value: SevLevel, cum: Record<SevLevel, number>) {
+  return (
+    <select name={name} defaultValue={value} className="input">
+      {LEVELS.map((l) => <option key={l.v} value={l.v}>{l.label} — 対象 {cum[l.v]}件（KEV含む）</option>)}
+    </select>
+  );
+}
 
 function Field({ label, children, hint }: { label: string; children: React.ReactNode; hint?: string }) {
   return (
@@ -20,6 +34,21 @@ function Field({ label, children, hint }: { label: string; children: React.React
 export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ totp?: string }> }) {
   const mail = await getMail();
   const p = await getPolicy();
+  // Cumulative open-finding counts per action line, so each dropdown option shows its real impact.
+  const [sc] = await q<{ kev: string; crit: string; high: string; med: string; low: string }>(
+    `SELECT count(*) FILTER (WHERE kev) kev,
+            count(*) FILTER (WHERE NOT kev AND severity='critical') crit,
+            count(*) FILTER (WHERE NOT kev AND severity='high') high,
+            count(*) FILTER (WHERE NOT kev AND severity='medium') med,
+            count(*) FILTER (WHERE NOT kev AND severity='low') low
+     FROM findings WHERE status='open'`);
+  const n = { kev: Number(sc?.kev ?? 0), crit: Number(sc?.crit ?? 0), high: Number(sc?.high ?? 0), med: Number(sc?.med ?? 0), low: Number(sc?.low ?? 0) };
+  const cum: Record<SevLevel, number> = {
+    critical: n.kev + n.crit,
+    high: n.kev + n.crit + n.high,
+    medium: n.kev + n.crit + n.high + n.med,
+    low: n.kev + n.crit + n.high + n.med + n.low,
+  };
   const { totp: totpState } = await searchParams;
   const user = await currentUser();
   const totp = user ? await getTotp(user.id) : { enabled: false, secret: '' };
@@ -53,14 +82,17 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
       </Card>
       <Card title="検知と通知のルール">
         <ActionForm action={savePolicy} className="space-y-3">
-          <Field label="すぐにメールする範囲" hint="KEV・緊急（CVSS 9.0以上）・侵入の兆候・監視の停止が既定です。高以下は画面の詳細でのみ表示します。">
-            <select name="notifyMinSeverity" defaultValue={p.notifyMinSeverity} className="input">
-              <option value="critical">KEV＋緊急（推奨）</option>
-              <option value="high">KEV＋緊急＋{SEV_LABEL.high}</option>
-            </select>
-          </Field>
+          <div className="rounded-md border border-line bg-bg p-3">
+            <p className="mb-2 text-sm font-semibold">対応レベル（深刻度ライン）</p>
+            <p className="mb-3 text-xs text-muted">「これ以上の深刻度を"要対応"として扱う」ラインです。画面とメールで別々に設定できます。各選択肢に<b>今その設定なら何件が対象になるか</b>を表示しています（現在 開いている脆弱性：緊急{n.crit}・高{n.high}・中{n.med}・低{n.low}、KEV{n.kev}）。</p>
+            <div className="space-y-3">
+              <Field label="対応ライン（画面）" hint="ホーム「今日やる」・緊急カウント・脆弱性タブの既定・各バッジに反映。">{levelSelect('screenLevel', p.screenLevel, cum)}</Field>
+              <Field label="即時メールの深刻度" hint="これ未満は日次まとめに回します。">{levelSelect('mailLevel', p.mailLevel, cum)}</Field>
+              <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="notifyKev" defaultChecked={p.notifyKev} /> 悪用が確認された脆弱性（CISA KEV）は深刻度にかかわらずメール・要対応にする</label>
+              <label className="flex items-start gap-2 text-sm"><input type="checkbox" name="watchAlwaysImmediate" defaultChecked={p.watchAlwaysImmediate} className="mt-1" /> <span>ウォッチ登録CVEは深刻度に関係なく即時メール<br /><span className="text-xs text-muted">オフ時：「修正版が出た／解消」のときは即時、ただの「検出」は上の即時メール深刻度に従います。</span></span></label>
+            </div>
+          </div>
           <Field label="日次まとめメールの時刻（時、サーバー時刻）" hint="前日からの変化を1通にまとめて送ります。変化が無い日は送りません。-1 で停止。"><input name="digestHour" type="number" className="input" defaultValue={p.digestHour ?? 8} /></Field>
-          <label className="flex items-center gap-2 text-sm"><input type="checkbox" name="notifyKev" defaultChecked={p.notifyKev} /> 悪用が確認された脆弱性（CISA KEV）は深刻度にかかわらずメールする</label>
           <Field label="報告が途絶えたらアラートを出すまでの時間（時間）"><input name="staleHours" type="number" className="input" defaultValue={p.staleHours} /></Field>
           <Field label="全ホストを毎日再照合する時刻（時、サーバー時刻）" hint="ソフトが変わっていなくても、新しく公表されたCVEを拾います。"><input name="fullRematchHour" type="number" className="input" defaultValue={p.fullRematchHour} /></Field>
           <Field label="OSV照合結果のキャッシュ（時間）"><input name="osvCacheHours" type="number" className="input" defaultValue={p.osvCacheHours} /></Field>

@@ -5,6 +5,8 @@ import { Card, Kev, SEV_LABEL, Sev, ago, vulnLink } from '@/components/ui';
 import { q } from '@/lib/db';
 import { VEX_JUSTIFICATIONS, VEX_LABEL } from '@/lib/vex';
 import { riskBucket, BUCKET_LABEL, type Bucket } from '@/lib/risk';
+import { getPolicy } from '@/lib/settings';
+import { sevInSql } from '@/lib/severity';
 import { suppressFinding } from '../actions';
 
 const BKT_CLS: Record<Bucket, string> = {
@@ -32,8 +34,9 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
   // all=1 (used by e-mail / cross-page links) is still honoured as "show everything".
   const sevParam = SEV_VALUES.includes(sp.severity ?? '') ? sp.severity! : '';
   const showAll = sp.all === '1' || sp.severity === '__all__' || !!sevParam;
+  const screenLevel = (await getPolicy()).screenLevel;
   if (sevParam) { params.push(sevParam); where.push(`f.severity=$${params.length}`); }
-  else if (!showAll && sp.kev !== '1') where.push("(f.kev OR f.severity='critical')");
+  else if (!showAll && sp.kev !== '1') where.push(`(f.kev OR f.severity IN (${sevInSql(screenLevel)}))`);
   if (sp.host && /^[0-9a-f-]{36}$/.test(sp.host)) { params.push(sp.host); where.push(`f.host_id=$${params.length}`); }
   if (sp.kev === '1') where.push('f.kev');
   if (sp.source) { params.push(sp.source); where.push(`f.source=$${params.length}`); }
@@ -63,16 +66,16 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
   return (
     <>
       <ExploreTabs />
-    <Card title={`脆弱性：${STATUS_LABEL[status]} ${total}件${!showAll && sp.kev !== '1' ? '（KEV・緊急）' : ''}`}>
+    <Card title={`脆弱性：${STATUS_LABEL[status]} ${total}件${!showAll && sp.kev !== '1' ? `（KEV・${SEV_LABEL[screenLevel]}以上）` : ''}`}>
       {!showAll && sp.kev !== '1' && (
         <p className="mb-3 text-xs text-muted">
-          KEV と緊急（CVSS 9.0以上）だけを表示しています。<Link className="text-accent" href={link({ all: '1', severity: undefined })}>すべての深刻度を表示</Link>
+          KEV と「対応ライン」（{SEV_LABEL[screenLevel]}以上）だけを表示しています。<Link className="text-accent" href={link({ all: '1', severity: undefined })}>すべての深刻度を表示</Link>
         </p>
       )}
-      {showAll && !sevParam && <p className="mb-3 text-xs text-muted">すべての深刻度を表示しています。<Link className="text-accent" href={link({ all: undefined, severity: undefined })}>KEV・緊急だけに戻す</Link></p>}
+      {showAll && !sevParam && <p className="mb-3 text-xs text-muted">すべての深刻度を表示しています。<Link className="text-accent" href={link({ all: undefined, severity: undefined })}>対応ラインに戻す</Link></p>}
       <form className="mb-4 grid grid-cols-2 gap-2 text-sm sm:flex sm:flex-wrap" action="/findings">
         <select name="status" defaultValue={status} className="input sm:w-auto"><option value="open">未対応</option><option value="suppressed">影響なし（VEX）</option><option value="resolved">解消済み</option></select>
-        <select name="severity" defaultValue={sevParam || (showAll ? '__all__' : '__act__')} className="input sm:w-auto"><option value="__act__">深刻度：KEV・緊急（既定）</option><option value="__all__">深刻度：すべて</option>{SEV_VALUES.map((s) => <option key={s} value={s}>{SEV_LABEL[s]}</option>)}</select>
+        <select name="severity" defaultValue={sevParam || (showAll ? '__all__' : '__act__')} className="input sm:w-auto"><option value="__act__">深刻度：要対応（KEV・{SEV_LABEL[screenLevel]}以上）</option><option value="__all__">深刻度：すべて</option>{SEV_VALUES.map((s) => <option key={s} value={s}>{SEV_LABEL[s]}</option>)}</select>
         <select name="source" defaultValue={sp.source ?? ''} className="input sm:w-auto"><option value="">種別：すべて</option><option value="os-advisory">OSパッケージ</option><option value="osv">アプリ依存</option></select>
         <label className="flex items-center gap-1"><input type="checkbox" name="kev" value="1" defaultChecked={sp.kev === '1'} /> KEVのみ</label>
         <input name="q" defaultValue={sp.q ?? ''} placeholder="CVE またはパッケージ名" className="input col-span-2 sm:w-48" />

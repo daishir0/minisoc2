@@ -5,7 +5,8 @@
 // not. Intrusion / monitoring signals are a separate, per-host-collapsed section.
 import { q } from './db';
 import { sendMail } from './mail';
-import { getMail } from './settings';
+import { getMail, getPolicy } from './settings';
+import { sevInSql } from './severity';
 import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsSection, type CveRow } from './mailfmt';
 
 type Row = CveRow & { host_id: string; host: string };
@@ -14,13 +15,14 @@ const PER_HOST = 8;
 
 export async function buildDigest(since: Date): Promise<{ subject: string; body: string } | null> {
   const url = (process.env.PUBLIC_URL ?? '').replace(/\/+$/, '');
-  // Notified findings are KEV + critical ONLY. "高"（high）and below are tracked in the app but never
-  // e-mailed — the mail is a "緊急だけ" channel, matching the home/findings "KEV・緊急" surface.
+  // Digest covers findings at or above the configured mail line (KEV always). Below it is tracked in the
+  // app but not e-mailed. Default is 緊急 (critical), matching the KEV・緊急 surface.
+  const policy = await getPolicy();
   const rows = await q<Row>(
     `SELECT f.host_id, h.name AS host, ${CVE_SELECT('$1')}
      FROM findings f JOIN hosts h ON h.id=f.host_id
      ${CVE_JOIN}
-     WHERE f.status='open' AND NOT h.disabled AND (f.kev OR f.severity='critical')`,
+     WHERE f.status='open' AND NOT h.disabled AND (f.kev OR f.severity IN (${sevInSql(policy.mailLevel)}))`,
     [since],
   );
   // intrusion / monitoring: per host × kind, with a representative (latest) title and a link so the

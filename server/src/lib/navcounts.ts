@@ -1,4 +1,6 @@
 import { q } from './db';
+import { getPolicy } from './settings';
+import { sevInSql } from './severity';
 
 // An alert "needs attention" when it is an open monitoring / detection signal. Vulnerability alerts
 // (vuln/kev) are only e-mail triggers — the standing vulnerability list is `findings` (the 脆弱性 tab,
@@ -17,11 +19,12 @@ export interface NavCounts {
 }
 
 export async function navCounts(): Promise<NavCounts> {
+  const policy = await getPolicy();
   const [r] = await q<{ d: string; s: string; v: string; l: string; f: string }>(
     `SELECT
        (SELECT count(*) FROM alerts WHERE status='open' AND ${IMPORTANT_ALERT}) AS d,
        (SELECT count(*) FROM hosts WHERE stale_alerted AND NOT disabled) AS s,
-       (SELECT count(*) FROM findings WHERE status='open' AND (kev OR severity='critical')) AS v,
+       (SELECT count(*) FROM findings WHERE status='open' AND (kev OR severity IN (${sevInSql(policy.screenLevel)}))) AS v,
        (SELECT count(*) FROM alerts WHERE kind='log' AND status='open' AND created_at > now() - interval '24 hours') AS l,
        (SELECT count(*) FROM host_file_day WHERE day > current_date - 30 AND sev='critical' AND acked_at IS NULL) AS f`,
   );

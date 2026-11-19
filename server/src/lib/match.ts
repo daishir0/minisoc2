@@ -355,7 +355,7 @@ export async function matchHost(hostId: string): Promise<{ open: number; added: 
       // Still-unresolved watched CVE that just became actionable: a fix version is now known. Notify once
       // per (host, package, fix) so the user hears the moment they can act — not on every scan.
       if (fixed) await raiseAlert({ kind: 'watch', severity: 'high', hostId, title: `[${host.name}] 監視中CVE ${c.vulnId} に対処可能：修正版が出ています（${c.pkg} → ${fixed.split(',')[0]}）`, detail: 'アップグレードで解消できます。このCVEは関心登録されています。', dedupeKey: `watch-fixable:${hostId}:${c.vulnId}|${c.pkg}|${fixed}` });
-    } else if (!quietSource(c.source) && !quietSystems(c) && ((isKev && policy.notifyKev) || atLeast(c.severity, policy.notifyMinSeverity))) {
+    } else if (!quietSource(c.source) && !quietSystems(c) && ((isKev && policy.notifyKev) || atLeast(c.severity, policy.mailLevel))) {
       await raiseAlert({
         kind: isKev ? 'kev' : 'vuln',
         severity: isKev ? 'critical' : (c.severity as 'critical' | 'high' | 'medium' | 'low'),

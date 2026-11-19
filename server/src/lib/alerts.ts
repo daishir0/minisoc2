@@ -1,8 +1,8 @@
 import { q, q1 } from './db';
 import { sendMail } from './mail';
-import { getMail } from './settings';
+import { getMail, getPolicy, type PolicySettings } from './settings';
+import { atLeast, sevInSql } from './severity';
 import { CVE_SELECT, CVE_JOIN, cveLines, cveScore, cveSort, groupByCve, opsSection, watchSection, type CveRow } from './mailfmt';
-import { riskBucket } from './risk';
 
 const nul = (x: string) => x.replace(/\u0000/g, '|'); // Postgres text rejects NUL
 
@@ -30,7 +30,7 @@ export async function raiseAlert(a: NewAlert): Promise<boolean> {
 // - Non-vuln critical (intrusion-ish state/log/agent): immediate.
 // - Plain `vuln` findings: immediate ONLY when exploit probability is high (EPSS >= ACT_EPSS). Everything
 //   else goes to the daily digest. This is what cuts the hundreds of low-EPSS critical-CVE mails.
-const IMMEDIATE_KINDS = new Set(['kev', 'watch', 'stale', 'feed', 'disk', 'baseline']);
+const IMMEDIATE_KINDS = new Set(['kev', 'stale', 'feed', 'disk', 'baseline']);
 const ACT_EPSS = 0.5;
 
 // Resolve the EPSS score of a `vuln` alert from the CVE embedded in its dedupe key
@@ -45,8 +45,13 @@ async function vulnEpss(dedupeKey: string): Promise<number | null> {
   return r?.s ?? null;
 }
 
-async function immediate(a: { kind: string; severity: string; dedupe_key: string }): Promise<boolean> {
-  if (a.kind === 'vuln') { const e = await vulnEpss(a.dedupe_key); return e != null && e >= ACT_EPSS; }
+async function immediate(a: { kind: string; severity: string; dedupe_key: string }, policy: PolicySettings): Promise<boolean> {
+  if (a.kind === 'vuln') { const e = await vulnEpss(a.dedupe_key); return (e != null && e >= ACT_EPSS) || atLeast(a.severity, policy.mailLevel); }
+  if (a.kind === 'watch') {
+    if (policy.watchAlwaysImmediate) return true;
+    if (/^watch-(fixable|upstream-fix)/.test(a.dedupe_key)) return true; // a published fix → always tell now
+    return atLeast(a.severity, policy.mailLevel); // a mere detection follows the mail line
+  }
   return IMMEDIATE_KINDS.has(a.kind) || a.severity === 'critical' || a.severity === 'info';
 }
 
@@ -59,7 +64,8 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
   );
   if (!pending.length) return { sent: 0, skipped: 0 };
   const mail = await getMail();
-  const flags = await Promise.all(pending.map(immediate));
+  const policy = await getPolicy();
+  const flags = await Promise.all(pending.map((a) => immediate(a, policy)));
   const toSend = pending.filter((_, i) => flags[i]);
   const skip = pending.filter((_, i) => !flags[i]);
   if (skip.length) await q("UPDATE alerts SET notified_at=now(), notify_error='digest only' WHERE id = ANY($1::bigint[])", [skip.map((a) => a.id)]);
@@ -74,18 +80,17 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
 
   // "Act now" findings on the hosts that just raised vulnerability alerts — same per-CVE format as the
   // daily digest (CVE id + title, EPSS, publish date, detection time), grouped by host, priority-sorted.
-  // KEV + critical ONLY: "高"（high）and below are never e-mailed (mail is a 緊急-only channel).
+  // Threshold = the configured mail line (KEV always included); below it goes to the daily digest.
   const vulnHosts = [...new Set(toSend.filter((a) => (a.kind === 'kev' || a.kind === 'vuln') && a.host_id).map((a) => a.host_id as string))];
   const actByHost = new Map<string, (CveRow & { host: string; host_id: string })[]>();
   if (vulnHosts.length) {
     const rows = await q<CveRow & { host_id: string; host: string }>(
       `SELECT f.host_id, h.name AS host, ${CVE_SELECT('$2')}
        FROM findings f JOIN hosts h ON h.id=f.host_id ${CVE_JOIN}
-       WHERE f.status='open' AND f.host_id = ANY($1::uuid[]) AND (f.kev OR f.severity='critical')`,
+       WHERE f.status='open' AND f.host_id = ANY($1::uuid[]) AND (f.kev OR f.severity IN (${sevInSql(policy.mailLevel)}))`,
       [vulnHosts, since],
     );
     for (const r of rows) {
-      if (riskBucket({ kev: r.kev, epss: r.epss ?? null, exposure: r.pub ? 'public' : '', severity: r.severity }) !== 'act') continue;
       actByHost.set(r.host, [...(actByHost.get(r.host) ?? []), r]);
     }
   }
