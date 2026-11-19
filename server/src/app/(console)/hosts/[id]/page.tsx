@@ -9,7 +9,6 @@ import type { HostState } from '@/lib/payload';
 import { hostAction, pollPullNow, registerSystem, savePullAide, unregisterSystem } from '../../actions';
 import { PendingButton } from '@/components/PendingButton';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
-import { taskKey } from '@/lib/tasks';
 import { AgentConfigCard, type AgentConfig } from '@/components/AgentConfigCard';
 import { ConfirmCollect } from '@/components/ConfirmCollect';
 import { TrendChart, SparkLine, type TrendPoint } from '@/components/TrendChart';
@@ -114,7 +113,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
      FROM findings WHERE host_id=$1 AND status='open' AND '__os__' = ANY(systems) GROUP BY 1`, [id]);
   const osK = osSplit.find((r) => r.kind === 'kernel');
   const osO = osSplit.find((r) => r.kind === 'other');
-  const osHref = osRow.sid ? `/systems/${osRow.sid}` : `/actions/${taskKey(h.id, '__os__')}`;
+  const osHref = osRow.sid ? `/systems/${osRow.sid}` : `/hosts/${h.id}`;
   // Actionable-now banner: OS findings whose fix is released ("上げれば直る"), surfaced right after a
   // collection so a freshly-published patch/kernel update is obvious. watch_cves matches are highlighted.
   const fixAvail = Number((await q<{ n: string }>("SELECT count(*) AS n FROM host_os_status WHERE host_id=$1 AND status='released'", [id]))[0].n);

@@ -6,7 +6,6 @@ import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q } from '@/lib/db';
 import { FleetOps } from '@/components/FleetOps';
 import { TreeState } from '@/components/TreeState';
-import { taskKey } from '@/lib/tasks';
 import { ConfirmCollect } from '@/components/ConfirmCollect';
 
 export default async function HostsPage() {
@@ -94,7 +93,7 @@ export default async function HostsPage() {
                   {/* host-wide units: OS + shared runtime envs, each a remediation target */}
                   {(os && (Number(os.k) + Number(os.c) > 0)) && (
                     <div className="mb-1 flex flex-wrap items-center gap-2 border-l-2 border-red-300 pl-3 py-1">
-                      <Link href={os.sid ? `/systems/${os.sid}` : `/actions/${taskKey(h.id, '__os__')}`} className="font-medium text-accent">OS（ホスト全体）</Link>
+                      <Link href={os.sid ? `/systems/${os.sid}` : `/hosts/${h.id}`} className="font-medium text-accent">OS（ホスト全体）</Link>
                       <span className="text-xs text-muted">kernel・glibc・openssl 等</span>
                       <span className="ml-auto flex items-center gap-3 text-xs">
                         <span className={Number(os.k) ? 'font-semibold text-red-600' : 'text-muted'}>KEV {os.k}</span>

@@ -5,11 +5,10 @@ import { usePathname } from 'next/navigation';
 
 // Four destinations mapped to the workflow: register assets -> auto-detect (vuln/log/integrity)
 // -> remediate. Everything else lives inside them.
-// Remediation task pages (/actions/[key]) are reached contextually from the home worklist, host and
-// system pages — they no longer have their own top-level tab, so they highlight under 資産.
+// Remediation now lives on the system pages (/systems/[id]); there is no separate 対応 section.
 export const SECTIONS = [
   { href: '/', label: 'ホーム', icon: '🏠', match: (p: string) => p === '/' },
-  { href: '/hosts', label: '資産', icon: '🖥', match: (p: string) => /^\/(assets|hosts|systems|enroll|actions)/.test(p) },
+  { href: '/hosts', label: '資産', icon: '🖥', match: (p: string) => /^\/(assets|hosts|systems|enroll)/.test(p) },
   { href: '/findings', label: '検知', icon: '🛡', match: (p: string) => /^\/(detect|findings|logs|integrity|changes|explore|cve|alerts|watch)/.test(p) },
 ];
 

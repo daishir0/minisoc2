@@ -65,7 +65,7 @@ export async function buildDigest(since: Date): Promise<{ subject: string; body:
     lines.push(...opsSection(ops.map((o) => ({ host: o.host, host_id: o.host_id, kind: o.kind, n: Number(o.n), title: o.title })), url));
     lines.push('');
   }
-  lines.push('――――――', `今日やること（優先度順）: ${url}/`, `すべての対応: ${url}/actions`);
+  lines.push('――――――', `今日やること（優先度順）: ${url}/`, `未対応の脆弱性をすべて見る: ${url}/findings`);
 
   const subject = `[minisoc2] 日次まとめ（未対応 KEV ${grandKev} / 緊急 ${grandCrit}）`;
   const body = lines.filter((x, i, a) => !(x === '' && a[i - 1] === '')).join('\n');

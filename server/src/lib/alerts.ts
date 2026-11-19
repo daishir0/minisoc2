@@ -142,8 +142,7 @@ export async function notifyPending(publicUrl: string): Promise<{ sent: number; 
     '',
     '――――――',
     `今日やること（優先度順）: ${publicUrl}/`,
-    `すべての対応: ${publicUrl}/actions`,
-    `脆弱性を絞り込む（KEV/EPSS/公開）: ${publicUrl}/findings`,
+    `未対応の脆弱性（KEV/EPSS/公開で絞り込み）: ${publicUrl}/findings`,
   );
   const subject = actTotal
     ? `[minisoc2] 今すぐ対応 ${actTotal}件${kevN ? `（KEV ${kevN}含む）` : ''}`

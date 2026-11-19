@@ -4,7 +4,6 @@ import { Masked } from '@/components/Mask';
 import { Card, Kev, Sev, ago, vulnLink } from '@/components/ui';
 import { q, q1 } from '@/lib/db';
 import { STACK_KEYS, detectStack } from '@/lib/systemmeta';
-import { taskKey } from '@/lib/tasks';
 import { addExclude, removeExclude, unregisterSystem, unsuppressVex } from '../../actions';
 import { VEX_LABEL } from '@/lib/vex';
 import { PendingButton } from '@/components/PendingButton';
@@ -54,7 +53,10 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
     (await q<{ kev: string; crit: string }>(`SELECT count(*) FILTER (WHERE kev) AS kev, count(*) FILTER (WHERE NOT kev AND severity='critical') AS crit FROM findings WHERE host_id=$1 AND status='open' AND (kev OR severity='critical') AND ${where}`, [s.host_id, ...params]))[0];
   const own = await cnt('$2 = ANY(systems)', [s.root]);
   const runtimes = [...new Set(services.map((x) => x.runtime_root).filter((x): x is string => !!x && x !== s.root))];
-  const runtimeRows = await Promise.all(runtimes.map(async (r) => ({ root: r, name: (await q1<{ name: string }>('SELECT name FROM systems WHERE host_id=$1 AND root=$2', [s.host_id, r]))?.name ?? r, ...(await cnt('$2 = ANY(systems)', [r])) })));
+  const runtimeRows = await Promise.all(runtimes.map(async (r) => { const sr = await q1<{ id: number; name: string }>('SELECT id, name FROM systems WHERE host_id=$1 AND root=$2', [s.host_id, r]); return { root: r, sid: sr?.id ?? null, name: sr?.name ?? r, ...(await cnt('$2 = ANY(systems)', [r])) }; }));
+  // The OS "system" row for this host — the breakdown rows below link to it instead of a separate task page.
+  const osSysId = (await q1<{ id: number }>("SELECT id FROM systems WHERE host_id=$1 AND root='__os__'", [s.host_id]))?.id ?? null;
+  const unitHref = (sid: number | null) => (sid ? `/systems/${sid}` : `/hosts/${s.host_id}`);
   const osPkgs = [...new Set(services.map((x) => x.os_pkg).filter((x): x is string => !!x))];
   const osRow = osPkgs.length ? await cnt("source='os-advisory' AND (pkg = ANY($2) OR EXISTS (SELECT 1 FROM unnest($2::text[]) o WHERE pkg LIKE o || '-%'))", [osPkgs]) : { kev: '0', crit: '0' };
   const wideRow = await cnt("source='os-advisory' AND pkg ~ '^(kernel|glibc|openssl|systemd|zlib|sudo|openssh)'", []);
@@ -119,10 +121,10 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
         <Card title="このシステムに影響する脆弱性（KEV・緊急）">
           <ul className="divide-y divide-line text-sm">
             {[
-              { label: '自前の依存', sub: 'lockfile・venv', row: own, href: `/actions/${taskKey(s.host_id, s.root)}`, certainty: '' },
-              ...runtimeRows.map((r) => ({ label: `実行環境：${r.name}`, sub: 'サービスが使用', row: r, href: `/actions/${taskKey(s.host_id, r.root)}`, certainty: '' })),
-              ...(osPkgs.length ? [{ label: `OS：${osPkgs.join('、')}`, sub: 'サービスの実行ファイル', row: osRow, href: `/actions/${taskKey(s.host_id, '__os__')}`, certainty: '' }] : []),
-              { label: 'OS：kernel・openssl など', sub: 'ホスト全体', row: wideRow, href: `/actions/${taskKey(s.host_id, '__os__')}`, certainty: '推定' },
+              { label: '自前の依存', sub: 'lockfile・venv', row: own, href: unitHref(s.id), certainty: '' },
+              ...runtimeRows.map((r) => ({ label: `実行環境：${r.name}`, sub: 'サービスが使用', row: r, href: unitHref(r.sid), certainty: '' })),
+              ...(osPkgs.length ? [{ label: `OS：${osPkgs.join('、')}`, sub: 'サービスの実行ファイル', row: osRow, href: unitHref(osSysId), certainty: '' }] : []),
+              { label: 'OS：kernel・openssl など', sub: 'ホスト全体', row: wideRow, href: unitHref(osSysId), certainty: '推定' },
             ].map((x, i) => (
               <li key={i} className="flex flex-wrap items-center gap-2 py-2">
                 <span className="font-medium">{x.label}</span>
@@ -130,7 +132,7 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
                 {x.certainty && <span className="rounded bg-bg px-1.5 py-0.5 text-[11px] text-muted">{x.certainty}</span>}
                 <span className="ml-auto">
                   {Number(x.row.kev) + Number(x.row.crit) === 0 ? <span className="text-muted">なし</span> : (
-                    <Link href={x.href} className="text-accent">{Number(x.row.kev) ? <b className="text-red-600">KEV {x.row.kev}</b> : null}{Number(x.row.kev) && Number(x.row.crit) ? '・' : ''}{Number(x.row.crit) ? `緊急 ${x.row.crit}` : ''} → 作業へ</Link>
+                    <Link href={x.href} className="text-accent">{Number(x.row.kev) ? <b className="text-red-600">KEV {x.row.kev}</b> : null}{Number(x.row.kev) && Number(x.row.crit) ? '・' : ''}{Number(x.row.crit) ? `緊急 ${x.row.crit}` : ''} → 対処へ</Link>
                   )}
                 </span>
               </li>

@@ -24,6 +24,7 @@ export interface Protected {
 
 export interface Task {
   key: string; // `${hostId}~${encodeURIComponent(root)}`
+  systemId?: number; // the systems row for (hostId, root); the remediation UI lives on /systems/[id]
   hostId: string;
   host: string;
   address: string;   // connection target: hostname (push) or SSH host (pull); '' if unknown
@@ -223,7 +224,7 @@ export async function listTasks(opts: { hostId?: string; root?: string } = {}): 
     // a fix is as urgent as the most exposed system it protects
     const exposure = protects.some((p) => p.exposure === 'public') ? 'public' : rest.exposure;
     const bucket = riskBucket({ kev: rest.kev > 0, epss: rest.epss, exposure, severity: rest.critical > 0 ? 'critical' : 'high' });
-    out.push({ ...rest, exposure, bucket, packages, protects, command: command(t.osId, t.root, eco, packages), overdue: t.status === 'hold' && !!t.due && t.due < today });
+    out.push({ ...rest, systemId: systems.get(`${t.hostId}|${t.root}`)?.id, exposure, bucket, packages, protects, command: command(t.osId, t.root, eco, packages), overdue: t.status === 'hold' && !!t.due && t.due < today });
   }
   // Priority order: Act → Attend → Track, then by risk score (KEV, public exposure, EPSS, size).
   return out.sort((a, b) =>

@@ -89,7 +89,7 @@ export default async function Home() {
             ))}
             {tasks.slice(0, 3).map((x) => (
               <li key={x.key} className="py-2">
-                <Link href={`/actions/${x.key}`} className="flex flex-wrap items-center gap-2">
+                <Link href={x.systemId ? `/systems/${x.systemId}` : `/hosts/${x.hostId}`} className="flex flex-wrap items-center gap-2">
                   <span className={`rounded px-1.5 py-0.5 text-[10px] ${x.bucket === 'act' ? 'bg-red-600 text-white' : x.bucket === 'attend' ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200' : 'bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300'}`}>{BUCKET_LABEL[x.bucket]}</span>
                   <span className="font-medium text-accent"><Masked kind="host">{x.host}</Masked>{x.root === '__os__' ? ' OS' : <>／<Masked kind="system">{x.name}</Masked></>}</span>
                   {x.exposure === 'public' && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700 dark:bg-red-950 dark:text-red-200">{EXPOSURE.public}</span>}
@@ -101,7 +101,7 @@ export default async function Home() {
             ))}
             {tasks.length > 3 && <li className="py-2 text-sm"><Link href="/findings" className="text-accent">ほか {tasks.length - 3}件の対応（未対応の脆弱性）→</Link></li>}
           </ul>
-          <p className="mt-2 text-xs text-muted">各行をタップすると、そのユニットの Claude Code 用プロンプトへ直行します。</p>
+          <p className="mt-2 text-xs text-muted">各行をタップすると、その対象のページ（CVEを選んで Claude Code 用プロンプトを生成）へ移動します。</p>
         </Card>
       )}
 
