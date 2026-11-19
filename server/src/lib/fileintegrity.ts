@@ -12,8 +12,12 @@ type Sev = 'critical' | 'high' | 'medium' | 'low';
 
 // How much a change to this path matters for intrusion detection.
 export function pathSeverity(p: string): Sev {
-  if (/\/\.ssh\//.test(p) || /\/etc\/sudoers(\.d\/.*|)$/.test(p) || /\/etc\/(passwd|shadow|group|gshadow)$/.test(p) || /\/etc\/ssh\/sshd_config$/.test(p)) return 'critical';
-  if (/^\/(bin|sbin|usr\/bin|usr\/sbin|usr\/local\/bin|usr\/local\/sbin)\//.test(p) || /\/etc\/(cron|crontab)/.test(p) || /\/etc\/systemd\/system\//.test(p) || /^\/boot\//.test(p)) return 'high';
+  // known_hosts is the trusted-server list and changes on every new SSH connection — routine, not a secret.
+  if (/\/\.ssh\/known_hosts2?$/.test(p)) return 'low';
+  // The dangerous files: ones that GRANT access (authorized_keys), private keys, and the account / privilege
+  // / daemon-config stores. A change here can mean a backdoor.
+  if (/\/\.ssh\/(authorized_keys2?|id_[A-Za-z0-9_]+)$/.test(p) || /\/etc\/sudoers(\.d\/.*|)$/.test(p) || /\/etc\/(passwd|shadow|group|gshadow)$/.test(p) || /\/etc\/ssh\/sshd_config$/.test(p)) return 'critical';
+  if (/\/\.ssh\//.test(p) || /^\/(bin|sbin|usr\/bin|usr\/sbin|usr\/local\/bin|usr\/local\/sbin)\//.test(p) || /\/etc\/(cron|crontab)/.test(p) || /\/etc\/systemd\/system\//.test(p) || /^\/boot\//.test(p)) return 'high';
   if (/^\/etc\//.test(p)) return 'medium';
   return 'low';
 }
