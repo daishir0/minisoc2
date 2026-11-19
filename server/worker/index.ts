@@ -363,10 +363,11 @@ async function housekeeping() {
   await q("DELETE FROM reports WHERE received_at < now() - interval '180 days'");
   await q("DELETE FROM log_batches WHERE received_at < now() - interval '180 days'");
   await q("DELETE FROM web_ip_daily WHERE day < now()::date - 35"); // per-IP transfer: short window; web_daily is kept
-  // Vulnerability alerts are one-shot e-mail triggers; the standing list is `findings`. Once an alert has
-  // been through notification, resolve it so the alerts view/badge reflect detection signals, not a growing
-  // pile of vuln rows whose findings are already fixed.
-  await q("UPDATE alerts SET status='resolved' WHERE status='open' AND kind IN ('vuln','kev') AND notified_at IS NOT NULL");
+  // vuln/kev/watch alerts are one-shot transition notifications (the standing lists are `findings` and the
+  // CVE監視 page). Once notified, resolve them so the alerts view/badge reflect current detection & health
+  // signals, not a growing pile of already-handled rows. The dedupe key keeps a resolved transition from
+  // re-opening on the next scan.
+  await q("UPDATE alerts SET status='resolved' WHERE status='open' AND kind IN ('vuln','kev','watch') AND notified_at IS NOT NULL");
   await q('DELETE FROM sessions WHERE expires_at < now()');
 }
 
