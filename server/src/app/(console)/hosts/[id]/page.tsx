@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { notFound } from 'next/navigation';
 import { Masked, MaskFree } from '@/components/Mask';
 import { Card, Sev, ago } from '@/components/ui';
+import { HostTypeCompare } from '@/components/HostTypeCompare';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q, q1 } from '@/lib/db';
 import type { HostState } from '@/lib/payload';
@@ -152,6 +153,13 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
         <Link className="btn-ghost ml-auto" href={`/hosts/${h.id}/history`}>✅ 対処の記録{fixedN ? `（${fixedN}）` : ''}</Link>
         <Link className="btn-ghost" href={`/findings?host=${h.id}`}>未対応の脆弱性</Link>
       </div>
+      {h.kind === 'pull' && (
+        <details className="rounded-md border border-line bg-bg p-3 text-sm">
+          <summary className="cursor-pointer text-muted">このホストは<b className="text-fg">プル型（読み取り専用SSH）</b>です — 通常ホストとの対応範囲の違いを見る</summary>
+          <p className="mt-2 text-xs text-muted">プル型のため、OSパッケージの脆弱性・未適用のOS更新・auditd・稼働サービス・ログイン可能アカウントは対象外の場合があります（下表）。OSパッケージは rpm/dpkg のある Linux なら対象、FreeBSD 等は対象外です。</p>
+          <div className="mt-3"><HostTypeCompare /></div>
+        </details>
+      )}
       <Card title="このホストの脆弱性の推移（90日・深刻度別の積み上げ）" right={<Link href={`/hosts/${h.id}/history`} className="text-xs text-accent">対処の記録</Link>}>
         <TrendChart points={hPts} resolvedTotal={Number(hResolved)} />
       </Card>

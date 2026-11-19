@@ -1,5 +1,7 @@
+import Link from 'next/link';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import { Card, ago } from '@/components/ui';
+import { HostTypeCompare } from '@/components/HostTypeCompare';
 import { q } from '@/lib/db';
 import { revokeEnrollToken } from '../actions';
 import { EnrollForm } from './EnrollForm';
@@ -18,6 +20,13 @@ export default async function EnrollPage() {
           起動のたびにこのサーバーから署名付きの最新版を取得し、取得できなければ手元の版で動きます。
         </p>
         <EnrollForm publicUrl={publicUrl} />
+        <p className="mt-4 border-t border-line pt-3 text-sm text-muted">
+          エージェントを置けないホスト（共用ホスティング等）は <Link href="/hosts/pull/new" className="text-accent">プル型（読み取り専用SSH）で登録</Link> できます。
+        </p>
+        <details className="mt-3">
+          <summary className="cursor-pointer text-sm text-accent">登録タイプの違い（通常 / プル型）を見る</summary>
+          <div className="mt-3"><HostTypeCompare /></div>
+        </details>
       </Card>
       <Card title="有効な登録トークン">
         {tokens.length === 0 ? <p className="text-sm text-muted">ありません。</p> : (
