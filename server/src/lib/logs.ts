@@ -15,6 +15,22 @@ function utcDay(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+// ---- access-log (CLF/combined) parsing for the daily web analytics ----
+// Both push agents and pull collection label web logs as source="file:<path>". We decode the request
+// line to a (day, vhost, status, response-bytes, client IP) tuple so the daily job can flag traffic /
+// error-rate spikes and large single-IP transfers. The day comes from the log line itself (not ingest
+// time), so pull hosts — which send lines without a per-line timestamp — still bucket on the right day.
+const ACCESS_SRC = /access[_.]log$/;
+const CLF = /^(\S+) \S+ \S+ \[(\d{2})\/([A-Za-z]{3})\/(\d{4}):[^\]]*\] "[A-Z]+ \S+ [^"]*" (\d{3}) (\d+|-)/;
+const MON: Record<string, string> = { Jan: '01', Feb: '02', Mar: '03', Apr: '04', May: '05', Jun: '06', Jul: '07', Aug: '08', Sep: '09', Oct: '10', Nov: '11', Dec: '12' };
+
+// Turn an access-log source path into a stable site label: basename, without .gz or a trailing date.
+function vhostOf(source: string): string {
+  let b = source.replace(/^file:/, '');
+  b = b.slice(b.lastIndexOf('/') + 1).replace(/\.gz$/, '').replace(/[-.]\d{8}$/, '');
+  return b.slice(0, 200);
+}
+
 export async function ensurePartition(day: string): Promise<void> {
   if (partitions.has(day)) return;
   const name = `raw_logs_${day.replace(/-/g, '')}`;
@@ -74,6 +90,9 @@ export async function ingestLogs(host: HostRow, batch: LogBatch): Promise<{ line
     );
   }
 
+  // 2b. web analytics: per-vhost status/byte counts + per-IP transfer, for access-log sources only.
+  await ingestWeb(host.id, entries);
+
   // 3. detection rules: the curated high-signal rules plus compiled Sigma (SigmaHQ) rules
   const sigma = await getSigmaRules();
   const hits: Hit[] = [];
@@ -91,6 +110,54 @@ export async function ingestLogs(host: HostRow, batch: LogBatch): Promise<{ line
     await raiseAlert({ kind: 'agent', severity: 'low', hostId: host.id, title: `[${host.name}] ログが1回の上限を超えたため一部を次回に繰り越しました`, dedupeKey: `logtrunc:${host.id}:${utcDay(now)}` });
   }
   return { lines: entries.length, storedRaw: !paused, hits: hits.length };
+}
+
+// Parse access-log lines and upsert the per-vhost and per-IP daily web aggregates. No-op for hosts that
+// ship no access log (the maps stay empty), so non-web hosts never get web_daily rows.
+async function ingestWeb(hostId: string, entries: { s: string; m: string }[]): Promise<void> {
+  type W = { day: string; vhost: string; req: number; c4: number; c5: number; bytes: number };
+  type I = { day: string; vhost: string; ip: string; req: number; bytes: number };
+  const web = new Map<string, W>();
+  const byIp = new Map<string, I>();
+  for (const e of entries) {
+    if (!ACCESS_SRC.test(vhostOf(e.s))) continue;
+    const m = CLF.exec(e.m);
+    if (!m) continue;
+    const [, ip, dd, mon, yy, st, bytes] = m;
+    const mm = MON[mon];
+    if (!mm) continue;
+    const day = `${yy}-${mm}-${dd}`;
+    const vhost = vhostOf(e.s);
+    const status = Number(st);
+    const nb = bytes === '-' ? 0 : Number(bytes) || 0;
+    const wk = `${day}\u0000${vhost}`;
+    const w = web.get(wk) ?? { day, vhost, req: 0, c4: 0, c5: 0, bytes: 0 };
+    w.req++; w.bytes += nb;
+    if (status >= 400 && status < 500) w.c4++; else if (status >= 500) w.c5++;
+    web.set(wk, w);
+    const ik = `${wk}\u0000${ip}`;
+    const iv = byIp.get(ik) ?? { day, vhost, ip: ip.slice(0, 100), req: 0, bytes: 0 };
+    iv.req++; iv.bytes += nb;
+    byIp.set(ik, iv);
+  }
+  if (web.size) {
+    const r = [...web.values()];
+    await q(
+      `INSERT INTO web_daily(host_id, day, vhost, req, c4xx, c5xx, bytes)
+       SELECT $1, d, v, rq, f, g, b FROM unnest($2::date[], $3::text[], $4::bigint[], $5::bigint[], $6::bigint[], $7::bigint[]) AS x(d, v, rq, f, g, b)
+       ON CONFLICT (host_id, day, vhost) DO UPDATE SET req=web_daily.req+EXCLUDED.req, c4xx=web_daily.c4xx+EXCLUDED.c4xx, c5xx=web_daily.c5xx+EXCLUDED.c5xx, bytes=web_daily.bytes+EXCLUDED.bytes`,
+      [hostId, r.map((x) => x.day), r.map((x) => x.vhost), r.map((x) => x.req), r.map((x) => x.c4), r.map((x) => x.c5), r.map((x) => x.bytes)],
+    );
+  }
+  if (byIp.size) {
+    const r = [...byIp.values()];
+    await q(
+      `INSERT INTO web_ip_daily(host_id, day, vhost, ip, req, bytes)
+       SELECT $1, d, v, p, rq, b FROM unnest($2::date[], $3::text[], $4::text[], $5::bigint[], $6::bigint[]) AS x(d, v, p, rq, b)
+       ON CONFLICT (host_id, day, vhost, ip) DO UPDATE SET req=web_ip_daily.req+EXCLUDED.req, bytes=web_ip_daily.bytes+EXCLUDED.bytes`,
+      [hostId, r.map((x) => x.day), r.map((x) => x.vhost), r.map((x) => x.ip), r.map((x) => x.req), r.map((x) => x.bytes)],
+    );
+  }
 }
 
 async function logEvent(host: HostRow, severity: string, title: string, sample: string): Promise<void> {

@@ -362,6 +362,7 @@ async function housekeeping() {
   await q("DELETE FROM change_events WHERE ts < now() - interval '180 days'");
   await q("DELETE FROM reports WHERE received_at < now() - interval '180 days'");
   await q("DELETE FROM log_batches WHERE received_at < now() - interval '180 days'");
+  await q("DELETE FROM web_ip_daily WHERE day < now()::date - 35"); // per-IP transfer: short window; web_daily is kept
   await q('DELETE FROM sessions WHERE expires_at < now()');
 }
 
@@ -426,6 +427,11 @@ async function logSpikes() {
   const y = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
   const last = await getSetting<{ day: string }>('last_spike_check', { day: '' });
   if (last.day === y) return;
+  const pol = await getPolicy();
+  // Most log sources need a high floor (100) to call a 3x day a "spike"; fail2ban bans are low-volume, so
+  // they use a lower floor. Fetch at the lowest floor, then apply the per-key floor below.
+  const floorFor = (key: string) => (key === 'rule:fail2ban_ban' ? pol.fail2banBanFloor : 100);
+  const minFloor = Math.min(100, pol.fail2banBanFloor);
   const spikes = await q<{ host_id: string; name: string; key: string; n: string; avg: string }>(
     `WITH t AS (
        SELECT host_id, 'source:' || source AS key, day, lines AS n FROM log_daily WHERE day BETWEEN $1::date - 7 AND $1::date
@@ -435,10 +441,10 @@ async function logSpikes() {
      SELECT t.host_id, h.name, t.key, max(n) FILTER (WHERE day = $1::date) AS n, avg(n) FILTER (WHERE day < $1::date) AS avg
      FROM t JOIN hosts h ON h.id=t.host_id GROUP BY t.host_id, h.name, t.key
      HAVING count(*) FILTER (WHERE day < $1::date) >= 3
-        AND max(n) FILTER (WHERE day = $1::date) >= 3 * avg(n) FILTER (WHERE day < $1::date)
-        AND max(n) FILTER (WHERE day = $1::date) >= 100`,
-    [y],
-  );
+        AND max(n) FILTER (WHERE day = $1::date) >= $2 * avg(n) FILTER (WHERE day < $1::date)
+        AND max(n) FILTER (WHERE day = $1::date) >= $3`,
+    [y, pol.webSpikeMult, minFloor],
+  ).then((rs) => rs.filter((s) => Number(s.n) >= floorFor(s.key)));
   for (const s of spikes) {
     await raiseAlert({
       kind: 'log', severity: 'medium', hostId: s.host_id,
@@ -449,6 +455,80 @@ async function logSpikes() {
   }
   await setSetting('last_spike_check', { day: y });
   if (spikes.length) log(`log spikes: ${spikes.length}`);
+}
+
+// Daily web-traffic analytics (push + pull hosts alike, from web_daily/web_ip_daily). Compares the latest
+// completed day to the trailing 7-day average for request volume and 4xx/5xx error rates, flags a traffic
+// blackout, and flags any single IP that pulled a lot of data. Runs once per day like logSpikes.
+async function webDaily() {
+  const y = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+  const last = await getSetting<{ day: string }>('last_web_check', { day: '' });
+  if (last.day === y) return;
+  const pol = await getPolicy();
+  const rows = await q<{ host_id: string; name: string; vhost: string; pull: boolean; hist: string;
+    req: string; areq: string; c4: string; a4: string; c5: string; a5: string }>(
+    `SELECT w.host_id, h.name, w.vhost, EXISTS(SELECT 1 FROM pull_targets pt WHERE pt.host_id=w.host_id) AS pull,
+       count(*) FILTER (WHERE day < $1::date) AS hist,
+       coalesce(max(req)  FILTER (WHERE day = $1::date), 0) AS req,  avg(req)  FILTER (WHERE day < $1::date) AS areq,
+       coalesce(max(c4xx) FILTER (WHERE day = $1::date), 0) AS c4,   avg(c4xx) FILTER (WHERE day < $1::date) AS a4,
+       coalesce(max(c5xx) FILTER (WHERE day = $1::date), 0) AS c5,   avg(c5xx) FILTER (WHERE day < $1::date) AS a5
+     FROM web_daily w JOIN hosts h ON h.id=w.host_id
+     WHERE w.day BETWEEN $1::date - 7 AND $1::date
+     GROUP BY w.host_id, h.name, w.vhost`,
+    [y],
+  );
+  const mult = pol.webSpikeMult;
+  let n = 0;
+  for (const r of rows) {
+    const hist = Number(r.hist);
+    const metrics: [string, number, number, number][] = [
+      ['リクエスト', Number(r.req), Number(r.areq) || 0, pol.webReqFloor],
+      ['4xx', Number(r.c4), Number(r.a4) || 0, pol.web4xxFloor],
+      ['5xx', Number(r.c5), Number(r.a5) || 0, pol.web5xxFloor],
+    ];
+    for (const [label, today, avg, floor] of metrics) {
+      if (hist >= 3 && today >= floor && today >= mult * Math.max(avg, 1)) {
+        await raiseAlert({
+          kind: 'log', severity: 'medium', hostId: r.host_id,
+          title: `[${r.name}] Web ${label}が平常の${(today / Math.max(avg, 1)).toFixed(1)}倍：${r.vhost}`,
+          detail: `${y}: ${today}件（直近7日平均 ${Math.round(avg)}件）`,
+          dedupeKey: `web:${r.host_id}:${r.vhost}:${label}:${y}`,
+        });
+        n++;
+      }
+    }
+    // Traffic blackout: an established site (7-day avg >= 100 req) served nothing yesterday.
+    if (hist >= 3 && Number(r.areq) >= 100 && Number(r.req) === 0) {
+      await raiseAlert({
+        kind: 'log', severity: 'info', hostId: r.host_id,
+        title: `[${r.name}] Web アクセスが途絶：${r.vhost}`,
+        detail: `${y}: 0件（直近7日平均 ${Math.round(Number(r.areq))}件）。移転・停止・DNS変更なら正常。`,
+        dedupeKey: `web-gap:${r.host_id}:${r.vhost}:${y}`,
+      });
+      n++;
+    }
+  }
+  // Large single-IP transfer in a day. Pull hosts read logs in capped chunks, so their byte totals are a
+  // lower bound — flag anyway, but say so in the detail.
+  const floorBytes = pol.webTransferMB * 1024 * 1024;
+  const ips = await q<{ host_id: string; name: string; vhost: string; ip: string; bytes: string; pull: boolean }>(
+    `SELECT wi.host_id, h.name, wi.vhost, wi.ip, wi.bytes,
+       EXISTS(SELECT 1 FROM pull_targets pt WHERE pt.host_id=wi.host_id) AS pull
+     FROM web_ip_daily wi JOIN hosts h ON h.id=wi.host_id
+     WHERE wi.day = $1::date AND wi.bytes >= $2`,
+    [y, floorBytes],
+  );
+  for (const r of ips) {
+    await raiseAlert({
+      kind: 'log', severity: 'medium', hostId: r.host_id,
+      title: `[${r.name}] Web 1つのIPへ ${(Number(r.bytes) / 1048576).toFixed(0)}MB 送信：${r.vhost}`,
+      detail: `${y}: ${r.ip}${r.pull ? '（PULL型のため実際はこれ以上の可能性・参考値）' : ''}。正当な閲覧か持ち出しか確認。`,
+      dedupeKey: `web-xfer:${r.host_id}:${r.vhost}:${r.ip}:${y}`,
+    });
+    n++;
+  }
+  await setSetting('last_web_check', { day: y });
+  if (n) log(`web daily: ${n} alerts`);
 }
 
 async function tick(n: number) {
@@ -473,6 +553,7 @@ async function tick(n: number) {
     ['watchUpstreamFix', watchUpstreamFix, 180],
     ['diskGuard', diskGuard, 10],
     ['logSpikes', logSpikes, 30],
+    ['webDaily', webDaily, 30],
     ['digest', digest, 5],
   ];
   for (const [name, fn, every] of steps) {

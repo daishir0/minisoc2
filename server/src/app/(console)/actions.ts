@@ -81,6 +81,9 @@ export async function savePolicy(_: Result, fd: FormData): Promise<Result> {
     ignoreIps: String(fd.get('ignoreIps') ?? '').split(/[\s,]+/).map((x) => x.trim()).filter((x) => /^[0-9a-fA-F:.]+$/.test(x)).slice(0, 200),
     osvCacheHours: num('osvCacheHours', 1, 168, cur.osvCacheHours),
     defaultAllowedIps: parseAllowList(String(fd.get('defaultAllowedIps') ?? '')).ok.slice(0, 200),
+    // Web-analytics thresholds: no form fields yet, preserved from current (defaults in DEFAULT_POLICY).
+    webReqFloor: cur.webReqFloor, web4xxFloor: cur.web4xxFloor, web5xxFloor: cur.web5xxFloor,
+    webSpikeMult: cur.webSpikeMult, webTransferMB: cur.webTransferMB, fail2banBanFloor: cur.fail2banBanFloor,
   };
   await setSetting('policy', next);
   revalidatePath('/settings');

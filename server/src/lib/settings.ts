@@ -23,6 +23,15 @@ export interface PolicySettings {
   digestHour: number; // daily summary mail (server time); -1 = off
   osvCacheHours: number;
   defaultAllowedIps: string[]; // global default allowed source IPs/CIDRs (empty = no restriction)
+  // Daily web-traffic analytics: a metric alerts when yesterday >= its floor AND >= webSpikeMult x the
+  // trailing 7-day average. webTransferMB flags one IP pulling that many MB in a day; fail2banBanFloor is
+  // the lower spike floor used for the fail2ban-ban rule (its volume is low, so the generic 100 is too high).
+  webReqFloor: number;
+  web4xxFloor: number;
+  web5xxFloor: number;
+  webSpikeMult: number;
+  webTransferMB: number;
+  fail2banBanFloor: number;
 }
 
 export const DEFAULT_MAIL: MailSettings = {
@@ -31,6 +40,7 @@ export const DEFAULT_MAIL: MailSettings = {
 
 export const DEFAULT_POLICY: PolicySettings = {
   notifyMinSeverity: 'critical', notifyKev: true, staleHours: 26, fullRematchHour: 6, logRetentionDays: 30, diskGuardPercent: 90, ignoreIps: [], digestHour: 8, osvCacheHours: 20, defaultAllowedIps: [],
+  webReqFloor: 300, web4xxFloor: 300, web5xxFloor: 30, webSpikeMult: 3, webTransferMB: 300, fail2banBanFloor: 20,
 };
 
 export async function getSetting<T>(key: string, fallback: T): Promise<T> {
