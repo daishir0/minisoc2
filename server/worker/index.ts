@@ -368,6 +368,11 @@ async function housekeeping() {
   // signals, not a growing pile of already-handled rows. The dedupe key keeps a resolved transition from
   // re-opening on the next scan.
   await q("UPDATE alerts SET status='resolved' WHERE status='open' AND kind IN ('vuln','kev','watch') AND notified_at IS NOT NULL");
+  // Real-time important file-change alerts are one-shot "possible tampering" notifications (emailed at once).
+  // File integrity is reviewed and acknowledged on the ファイル改ざん tab (host_file_day), so resolve the
+  // notified alert rows instead of letting them pile up in the generic alerts view. Non-file state alerts
+  // (e.g. a new listening port) are left alone — they have no other home.
+  await q("UPDATE alerts SET status='resolved' WHERE status='open' AND kind='state' AND notified_at IS NOT NULL AND title LIKE '%監視ファイル%'");
   await q('DELETE FROM sessions WHERE expires_at < now()');
 }
 

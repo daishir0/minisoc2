@@ -82,19 +82,20 @@ export default async function IntegrityPage({ searchParams }: { searchParams: Pr
   const tracked = hosts.reduce((s, h) => s + Number(h.files), 0);
   const basepoint = (await q<{ d: string }>("SELECT value->>'date' AS d FROM settings WHERE key='last_file_snapshot'"))[0]?.d ?? null;
 
-  // The "ファイル改ざん" badge counts exactly these: important (重大/高) changes in the latest daily diff.
-  // Surface them at the very top so the badge number is immediately visible as a concrete list.
-  const impDay = (await q<{ d: string }>("SELECT to_char(max(day), 'YYYY-MM-DD') AS d FROM host_file_day"))[0]?.d ?? null;
-  const impRows: Row[] = impDay
-    ? await q<Row>(
-        `SELECT h.name AS host, d.host_id, d.path, d.kind, d.sev, d.old_sha, d.new_sha
-         FROM host_file_day d JOIN hosts h ON h.id=d.host_id
-         WHERE d.day=$1 AND d.sev IN ('critical','high') AND d.acked_at IS NULL
-         ORDER BY CASE d.sev WHEN 'critical' THEN 0 ELSE 1 END, h.name, d.path`, [impDay])
-    : [];
-  const impAckedN = impDay
-    ? Number((await q<{ n: string }>("SELECT count(*) AS n FROM host_file_day WHERE day=$1 AND sev IN ('critical','high') AND acked_at IS NOT NULL", [impDay]))[0].n)
-    : 0;
+  // The single home for "file changes that still need a look": every un-acked important (重大/高) change
+  // in the recent window (file integrity is reviewed only here now; the real-time 'state' file alerts are
+  // resolved after notification). This list is exactly what the ファイル改ざん badge counts.
+  // Badge/"要確認" = un-acked CRITICAL changes only (identity / SSH keys / sudoers / passwd — genuine
+  // tampering concern). 'high' changes are mostly routine package updates (executables), so they stay in
+  // the lists below but are not badged.
+  const FILE_WINDOW = 30;
+  const impRows = await q<Row & { day: string }>(
+    `SELECT h.name AS host, d.host_id, to_char(d.day, 'YYYY-MM-DD') AS day, d.path, d.kind, d.sev, d.old_sha, d.new_sha
+     FROM host_file_day d JOIN hosts h ON h.id=d.host_id
+     WHERE d.day > current_date - ${FILE_WINDOW} AND d.sev='critical' AND d.acked_at IS NULL
+     ORDER BY d.day DESC, h.name, d.path`);
+  const impAckedN = Number((await q<{ n: string }>(
+    `SELECT count(*) AS n FROM host_file_day WHERE day > current_date - ${FILE_WINDOW} AND sev='critical' AND acked_at IS NOT NULL`))[0].n);
 
   // LIVE diff: current baseline vs the daily basepoint snapshot — which files changed since the basepoint
   // and how (from the received hashes). Works as soon as a basepoint exists (no need to wait for 2 AM).
@@ -125,39 +126,38 @@ export default async function IntegrityPage({ searchParams }: { searchParams: Pr
     <>
       <ExploreTabs />
       <Card
-        title={`要確認の重要なファイル変化${impDay ? `（最新 ${impDay}）` : ''}・${impRows.length}件`}
-        right={impRows.length > 0 && impDay ? (
-          <form action={ackFileChange}><input type="hidden" name="day" value={impDay} /><input type="hidden" name="all" value="1" /><button className="text-xs text-accent">すべて確認済み</button></form>
+        title={`要確認の重大なファイル変化・未確認 ${impRows.length}件`}
+        right={impRows.length > 0 ? (
+          <form action={ackFileChange}><input type="hidden" name="all" value="1" /><button className="text-xs text-accent">すべて確認済み</button></form>
         ) : undefined}
       >
         {impRows.length === 0 ? (
-          <p className="text-sm text-green-600">✅ 最新の日次差分に、未確認の重要（重大・高）なファイル変化はありません。下に全変化とベースライン状態を表示しています。</p>
+          <p className="text-sm text-green-600">✅ 直近{FILE_WINDOW}日に、未確認の<b>重大</b>なファイル変化（SSH鍵・sudoers・passwd/shadow など）はありません。実行ファイル等の「高」の変化は下の一覧で確認できます。</p>
         ) : (
           <>
-            <p className="mb-3 text-xs text-muted">SSH鍵・sudoers・passwd/shadow・実行ファイル・cron・systemd など<b>重要パス</b>の変化です（最新の日次差分）。心当たりが無ければ各ホストで調査し、確認できたら「確認済み」でバッジから外せます。</p>
+            <p className="mb-3 text-xs text-muted"><b>重大パス</b>（SSH鍵・sudoers・passwd/shadow・identity）の変化（直近{FILE_WINDOW}日・未確認）です。改ざんの可能性があるので、心当たりが無ければ各ホストで調査し、確認できたら「確認済み」でバッジから外せます。実行ファイル等の「高」の変化（多くはパッケージ更新）は下の一覧に出ます。</p>
             <ul className="divide-y divide-line text-sm">
               {impRows.map((d, i) => (
                 <li key={i} className="flex flex-wrap items-center gap-2 py-1.5">
                   <span className={`rounded px-1.5 py-0.5 text-[10px] ${SEV_CLS[d.sev] ?? 'bg-bg text-muted'}`}>{SEV_LABEL[d.sev] ?? d.sev}</span>
                   <span className={`rounded px-1.5 py-0.5 text-[10px] ${KIND_CLS[d.kind] ?? 'bg-bg text-muted'}`}>{KIND_LABEL[d.kind] ?? d.kind}</span>
+                  <span className="whitespace-nowrap text-[11px] text-muted">{d.day}</span>
                   <Link href={`/hosts/${d.host_id}`} className="text-xs text-accent"><Masked kind="host">{d.host}</Masked></Link>
                   <span className="min-w-0 flex-1 break-all font-mono text-xs"><MaskFree>{d.path}</MaskFree></span>
                   <span className="whitespace-nowrap font-mono text-[11px] text-muted">{changeText(d.kind, d.old_sha, d.new_sha)}</span>
-                  {impDay && (
-                    <form action={ackFileChange} className="shrink-0">
-                      <input type="hidden" name="day" value={impDay} /><input type="hidden" name="host_id" value={d.host_id} /><input type="hidden" name="path" value={d.path} />
-                      <button className="btn-ghost">確認済み</button>
-                    </form>
-                  )}
+                  <form action={ackFileChange} className="shrink-0">
+                    <input type="hidden" name="day" value={d.day} /><input type="hidden" name="host_id" value={d.host_id} /><input type="hidden" name="path" value={d.path} />
+                    <button className="btn-ghost">確認済み</button>
+                  </form>
                 </li>
               ))}
             </ul>
           </>
         )}
-        {impAckedN > 0 && impDay && (
+        {impAckedN > 0 && (
           <p className="mt-2 flex items-center gap-2 text-xs text-muted">
-            確認済み {impAckedN}件
-            <form action={ackFileChange}><input type="hidden" name="day" value={impDay} /><input type="hidden" name="all" value="1" /><input type="hidden" name="undo" value="1" /><button className="text-accent">すべて戻す</button></form>
+            確認済み {impAckedN}件（直近{FILE_WINDOW}日）
+            <form action={ackFileChange}><input type="hidden" name="all" value="1" /><input type="hidden" name="undo" value="1" /><button className="text-accent">すべて戻す</button></form>
           </p>
         )}
       </Card>

@@ -13,7 +13,7 @@ export interface NavCounts {
   staleHosts: number;   // hosts that stopped reporting (top-level 資産)
   vuln: number;         // open KEV・緊急 findings (脆弱性 sub-tab)
   logThreat: number;    // log threats in the last 24h (ログ脅威 sub-tab)
-  fileChange: number;   // important file changes, latest day-over-day (ファイル改ざん sub-tab)
+  fileChange: number;   // un-acked CRITICAL file changes (identity/keys/sudoers) in the recent window (ファイル改ざん sub-tab)
 }
 
 export async function navCounts(): Promise<NavCounts> {
@@ -23,7 +23,7 @@ export async function navCounts(): Promise<NavCounts> {
        (SELECT count(*) FROM hosts WHERE stale_alerted AND NOT disabled) AS s,
        (SELECT count(*) FROM findings WHERE status='open' AND (kev OR severity='critical')) AS v,
        (SELECT count(*) FROM alerts WHERE kind='log' AND status='open' AND created_at > now() - interval '24 hours') AS l,
-       (SELECT count(*) FROM host_file_day WHERE day=(SELECT max(day) FROM host_file_day) AND sev IN ('critical','high') AND acked_at IS NULL) AS f`,
+       (SELECT count(*) FROM host_file_day WHERE day > current_date - 30 AND sev='critical' AND acked_at IS NULL) AS f`,
   );
   return {
     detectAlerts: Number(r?.d ?? 0), staleHosts: Number(r?.s ?? 0), vuln: Number(r?.v ?? 0),

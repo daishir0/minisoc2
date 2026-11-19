@@ -22,7 +22,7 @@ export default async function Home() {
             (SELECT count(*) FROM systems WHERE exposure <> 'unknown') AS exposed,
             (SELECT count(*) FROM alerts WHERE kind='log' AND status='open' AND created_at > now() - interval '24 hours') AS logthreat,
             -- File integrity shown as the latest daily snapshot's day-over-day diff (max 1 day), details on /integrity.
-            (SELECT count(*) FROM host_file_day WHERE day=(SELECT max(day) FROM host_file_day) AND sev IN ('critical','high') AND acked_at IS NULL) AS filechange`,
+            (SELECT count(*) FROM host_file_day WHERE day > current_date - 30 AND sev='critical' AND acked_at IS NULL) AS filechange`,
   );
   const tasks = (await listTasks()).filter((x) => x.status !== 'hold' || x.overdue);
   const det = await openDetections(5);
