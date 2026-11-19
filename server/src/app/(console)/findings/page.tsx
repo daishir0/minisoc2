@@ -21,14 +21,19 @@ const epssPct = (e: number | null) => (e != null ? `EPSS ${Math.round(e * 100)}%
 
 const PAGE = 100;
 const STATUS_LABEL: Record<string, string> = { open: '未対応', suppressed: '影響なし（VEX）', resolved: '解消済み' };
+const SEV_VALUES = ['critical', 'high', 'medium', 'low', 'unknown'];
 
 export default async function FindingsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
   const status = ['open', 'suppressed', 'resolved'].includes(sp.status ?? '') ? sp.status! : 'open';
   const where = ['f.status=$1'];
   const params: unknown[] = [status];
-  const showAll = sp.all === '1' || !!sp.severity;
-  if (sp.severity) { params.push(sp.severity); where.push(`f.severity=$${params.length}`); }
+  // The severity dropdown carries the active view so it can never disagree with the results:
+  //   __act__ (default) = KEV・緊急 only, __all__ = every severity, or a specific severity.
+  // all=1 (used by e-mail / cross-page links) is still honoured as "show everything".
+  const sevParam = SEV_VALUES.includes(sp.severity ?? '') ? sp.severity! : '';
+  const showAll = sp.all === '1' || sp.severity === '__all__' || !!sevParam;
+  if (sevParam) { params.push(sevParam); where.push(`f.severity=$${params.length}`); }
   else if (!showAll && sp.kev !== '1') where.push("(f.kev OR f.severity='critical')");
   if (sp.host && /^[0-9a-f-]{36}$/.test(sp.host)) { params.push(sp.host); where.push(`f.host_id=$${params.length}`); }
   if (sp.kev === '1') where.push('f.kev');
@@ -61,21 +66,20 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
       <Breadcrumbs items={[CRUMB.home, { label: "検知" }]} />
       <ExploreTabs />
     <Card title={`脆弱性：${STATUS_LABEL[status]} ${total}件${!showAll && sp.kev !== '1' ? '（KEV・緊急）' : ''}`}>
-      {!showAll && (
+      {!showAll && sp.kev !== '1' && (
         <p className="mb-3 text-xs text-muted">
-          KEV と緊急（CVSS 9.0以上）だけを表示しています。<Link className="text-accent" href={link({ all: '1' })}>すべての深刻度を表示</Link>
+          KEV と緊急（CVSS 9.0以上）だけを表示しています。<Link className="text-accent" href={link({ all: '1', severity: undefined })}>すべての深刻度を表示</Link>
         </p>
       )}
-      {showAll && !sp.severity && <p className="mb-3 text-xs text-muted">すべての深刻度を表示しています。<Link className="text-accent" href={link({ all: undefined })}>KEV・緊急だけに戻す</Link></p>}
+      {showAll && !sevParam && <p className="mb-3 text-xs text-muted">すべての深刻度を表示しています。<Link className="text-accent" href={link({ all: undefined, severity: undefined })}>KEV・緊急だけに戻す</Link></p>}
       <form className="mb-4 grid grid-cols-2 gap-2 text-sm sm:flex sm:flex-wrap" action="/findings">
         <select name="status" defaultValue={status} className="input sm:w-auto"><option value="open">未対応</option><option value="suppressed">影響なし（VEX）</option><option value="resolved">解消済み</option></select>
-        <select name="severity" defaultValue={sp.severity ?? ''} className="input sm:w-auto"><option value="">深刻度：すべて</option>{['critical', 'high', 'medium', 'low', 'unknown'].map((s) => <option key={s} value={s}>{SEV_LABEL[s]}</option>)}</select>
+        <select name="severity" defaultValue={sevParam || (showAll ? '__all__' : '__act__')} className="input sm:w-auto"><option value="__act__">深刻度：KEV・緊急（既定）</option><option value="__all__">深刻度：すべて</option>{SEV_VALUES.map((s) => <option key={s} value={s}>{SEV_LABEL[s]}</option>)}</select>
         <select name="source" defaultValue={sp.source ?? ''} className="input sm:w-auto"><option value="">種別：すべて</option><option value="os-advisory">OSパッケージ</option><option value="osv">アプリ依存</option></select>
         <label className="flex items-center gap-1"><input type="checkbox" name="kev" value="1" defaultChecked={sp.kev === '1'} /> KEVのみ</label>
         <input name="q" defaultValue={sp.q ?? ''} placeholder="CVE またはパッケージ名" className="input col-span-2 sm:w-48" />
         {sp.host && <input type="hidden" name="host" value={sp.host} />}
         {sp.system && <input type="hidden" name="system" value={sp.system} />}
-        {sp.all && <input type="hidden" name="all" value="1" />}
         <button className="btn">絞り込み</button>
         {sp.host && <Link href={link({ host: undefined, system: undefined })} className="btn-ghost">全ホスト</Link>}
         {sp.system && <Link href={link({ system: undefined })} className="btn-ghost col-span-2 truncate">システム：{sp.system === '__os__' ? 'OSパッケージ' : <Masked kind="system">{sp.system.split('/').pop() ?? ''}</Masked>} ✕</Link>}
