@@ -6,6 +6,7 @@ import { createAdmin, endSession, hasAdmin, startSession, verifyLogin } from '@/
 import { isLimited, pickClientIp, rateLimited } from '@/lib/body';
 import { safeEqual } from '@/lib/secrets';
 import { verifyTotp } from '@/lib/totp';
+import { recordEvent } from '@/lib/events';
 
 export type FormState = { error?: string; totp?: boolean };
 
@@ -31,6 +32,7 @@ export async function login(_: FormState, fd: FormData): Promise<FormState> {
     }
   }
   await startSession(u.id);
+  await recordEvent({ kind: 'ops', important: false, title: `ログイン成功：${String(fd.get('email') ?? '').trim().toLowerCase()}（${await ip()}）` });
   redirect('/');
 }
 

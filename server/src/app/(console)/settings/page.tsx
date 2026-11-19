@@ -2,11 +2,17 @@ import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import QRCode from 'qrcode';
 import { ActionForm } from '@/components/ActionForm';
 import { Card, SEV_LABEL } from '@/components/ui';
-import { currentUser, getTotp } from '@/lib/auth';
+import { currentUser, getTotp, listUsers } from '@/lib/auth';
 import { otpauthURL } from '@/lib/totp';
 import { getMail, getPolicy, type SevLevel } from '@/lib/settings';
 import { q } from '@/lib/db';
-import { confirmTotp, disableTotp2fa, saveMail, savePolicy, startTotp } from '../actions';
+import { Masked } from '@/components/Mask';
+import { confirmTotp, disableTotp2fa, saveMail, savePolicy, startTotp, addUserAction, deleteUserAction, resetUserPasswordAction } from '../actions';
+
+const USER_MSG: Record<string, string> = {
+  deleted: 'ユーザーを削除しました。', pwreset: 'パスワードを再設定しました（対象ユーザーは次回ログインから新パスワード）。',
+  self: '自分自身は削除できません。', last: '最後の管理者は削除できません。', pwerr: 'パスワードは8文字以上にしてください。',
+};
 
 // The action-line options, with the cumulative "how many findings this would make actionable" shown inline
 // so the impact of each choice is visible before saving.
@@ -31,7 +37,7 @@ function Field({ label, children, hint }: { label: string; children: React.React
   );
 }
 
-export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ totp?: string }> }) {
+export default async function SettingsPage({ searchParams }: { searchParams: Promise<{ totp?: string; user?: string }> }) {
   const mail = await getMail();
   const p = await getPolicy();
   // Cumulative open-finding counts per action line, so each dropdown option shows its real impact.
@@ -49,8 +55,9 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
     medium: n.kev + n.crit + n.high + n.med,
     low: n.kev + n.crit + n.high + n.med + n.low,
   };
-  const { totp: totpState } = await searchParams;
+  const { totp: totpState, user: userMsg } = await searchParams;
   const user = await currentUser();
+  const users = await listUsers();
   const totp = user ? await getTotp(user.id) : { enabled: false, secret: '' };
   const qrSvg = totpState === 'setup' && user && totp.secret && !totp.enabled
     ? await QRCode.toString(otpauthURL(user.email, totp.secret), { type: 'svg', margin: 1, width: 192 })
@@ -102,6 +109,42 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
           <Field label="ディスク使用率の上限（%）" hint="超えると生ログの保存を一時停止します（ルール判定と集計は続けます）。"><input name="diskGuardPercent" type="number" className="input" defaultValue={p.diskGuardPercent} /></Field>
           <button className="btn">保存</button>
         </ActionForm>
+      </Card>
+      <Card title="ユーザー管理">
+        <p className="mb-3 text-sm text-muted">ログインできる管理者です。<b>全員が同じ権限（管理者）</b>で、各自が自分のメール・パスワード・2段階認証を持ちます。操作は「変化の履歴（運用の記録）」に実行者付きで残ります。</p>
+        {userMsg && USER_MSG[userMsg] && <p className={`mb-3 text-sm ${['self', 'last', 'pwerr'].includes(userMsg) ? 'text-red-600' : 'text-green-600'}`}>{USER_MSG[userMsg]}</p>}
+        <div className="overflow-x-auto">
+          <table className="tbl"><thead><tr><th>メール</th><th>2FA</th><th>最終ログイン</th><th>操作</th></tr></thead><tbody>
+            {users.map((uu) => (
+              <tr key={uu.id}>
+                <td className="break-all"><Masked kind="email">{uu.email}</Masked>{uu.id === user?.id && <span className="ml-1 text-xs text-muted">（自分）</span>}</td>
+                <td className="whitespace-nowrap text-xs">{uu.totp_enabled ? '✅ 有効' : '—'}</td>
+                <td className="whitespace-nowrap text-xs text-muted">{uu.last_login_at ? new Date(uu.last_login_at).toLocaleString('ja-JP') : '未ログイン'}</td>
+                <td>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <form action={resetUserPasswordAction} className="flex items-center gap-1">
+                      <input type="hidden" name="id" value={uu.id} />
+                      <input name="password" type="text" className="input h-7 w-36 text-xs" placeholder="新しいパスワード" autoComplete="off" />
+                      <button className="btn-ghost text-xs">再設定</button>
+                    </form>
+                    {uu.id !== user?.id && (
+                      <form action={deleteUserAction}><input type="hidden" name="id" value={uu.id} /><button className="btn-ghost text-xs text-red-600">削除</button></form>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            ))}
+          </tbody></table>
+        </div>
+        <div className="mt-4 border-t border-line pt-3">
+          <p className="mb-2 text-sm font-medium">ユーザーを追加</p>
+          <ActionForm action={addUserAction} className="flex flex-wrap items-end gap-2">
+            <Field label="メールアドレス"><input name="email" type="email" className="input" placeholder="person@example.com" autoComplete="off" /></Field>
+            <Field label="仮パスワード（8文字以上）"><input name="password" type="text" className="input" autoComplete="off" /></Field>
+            <button className="btn">追加</button>
+          </ActionForm>
+          <p className="mt-2 text-xs text-muted">追加後、本人がこの仮パスワードでログイン → パスワード変更＆2段階認証を各自で登録してください。</p>
+        </div>
       </Card>
       <Card title="2段階認証（2FA）">
         <p className="mb-3 text-sm text-muted">

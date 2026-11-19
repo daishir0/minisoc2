@@ -3,7 +3,7 @@
 import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 import { randomUUID } from 'node:crypto';
-import { disableTotp, enableTotp, getTotp, requireUser, startTotpSecret } from '@/lib/auth';
+import { disableTotp, enableTotp, getTotp, requireUser, startTotpSecret, addUser as authAddUser, deleteUser as authDeleteUser, resetUserPassword as authResetPw, countUsers } from '@/lib/auth';
 import { verifyTotp } from '@/lib/totp';
 import { pollPull, safePath } from '@/lib/pullssh';
 import { recordEvent } from '@/lib/events';
@@ -507,6 +507,40 @@ export async function deleteSystem(fd: FormData): Promise<void> {
 async function opsEvent(title: string, hostId?: string): Promise<void> {
   const u = await requireUser();
   await recordEvent({ hostId: hostId ?? null, kind: 'ops', important: false, title: `${title}（${u.email}）` });
+}
+
+// --- User management (every user is a full admin) ---
+export async function addUserAction(_: Result, fd: FormData): Promise<Result> {
+  await requireUser();
+  const email = String(fd.get('email') ?? '');
+  const r = await authAddUser(email, String(fd.get('password') ?? ''));
+  if (r.error) return { error: r.error };
+  await opsEvent(`ユーザーを追加：${email.trim().toLowerCase()}`);
+  revalidatePath('/settings');
+  return { ok: `ユーザー ${email.trim().toLowerCase()} を追加しました。本人がログイン後、パスワード変更と2段階認証の登録を行ってください。` };
+}
+
+export async function deleteUserAction(fd: FormData): Promise<void> {
+  const me = await requireUser();
+  const id = Number(fd.get('id'));
+  if (!Number.isInteger(id)) return;
+  if (id === me.id) redirect('/settings?user=self');
+  if ((await countUsers()) <= 1) redirect('/settings?user=last');
+  await opsEvent(`ユーザーを削除：id=${id}`);
+  await authDeleteUser(id);
+  revalidatePath('/settings');
+  redirect('/settings?user=deleted');
+}
+
+export async function resetUserPasswordAction(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = Number(fd.get('id'));
+  if (!Number.isInteger(id)) return;
+  const r = await authResetPw(id, String(fd.get('password') ?? ''));
+  if (r.error) redirect('/settings?user=pwerr');
+  await opsEvent(`ユーザーのパスワードを再設定：id=${id}`);
+  revalidatePath('/settings');
+  redirect('/settings?user=pwreset');
 }
 
 export async function saveTask(fd: FormData): Promise<void> {
