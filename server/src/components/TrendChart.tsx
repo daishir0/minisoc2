@@ -22,6 +22,26 @@ const fmtDay = (d: string, live?: boolean) => {
   return `${Number(m)}/${Number(day)}`;
 };
 
+// Build exactly `range` consecutive days ending at the latest point (today), so the left edge is always
+// today−range even when data starts later. Missing days carry the previous day's counts forward (a count
+// persists until the next snapshot); days before any data are shown as 0 ("not yet collected").
+const DAY_MS = 86400_000;
+function spanDays(points: TrendPoint[], range: number): TrendPoint[] {
+  if (!points.length) return [];
+  const byDay = new Map(points.map((p) => [p.day, p]));
+  const end = new Date(points[points.length - 1].day + 'T00:00:00Z').getTime();
+  const out: TrendPoint[] = [];
+  let carry: TrendPoint | null = null;
+  for (let i = range - 1; i >= 0; i--) {
+    const key = new Date(end - i * DAY_MS).toISOString().slice(0, 10);
+    const p = byDay.get(key);
+    if (p) { out.push(p); carry = p; }
+    else if (carry) out.push({ ...carry, day: key, live: false });
+    else out.push({ day: key, kev: 0, critical: 0, high: 0, medium: 0, low: 0 });
+  }
+  return out;
+}
+
 // Pure SVG stacked area with a hover guide + HTML tooltip. No text in the SVG (labels are HTML) so it can
 // stretch to any width with preserveAspectRatio="none" and stay crisp.
 function StackedChart({ points, hidden, height }: { points: TrendPoint[]; hidden: Set<SevKey>; height: number }) {
@@ -79,7 +99,7 @@ function ChartPanel({ points, resolvedTotal, height, compact }: { points: TrendP
   const [hidden, setHidden] = useState<Set<SevKey>>(new Set());
   const [range, setRange] = useState<number>(90);
   const toggle = (k: SevKey) => setHidden((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else if (n.size < SEV.length - 1) n.add(k); return n; });
-  const view = range >= points.length ? points : points.slice(points.length - range);
+  const view = spanDays(points, range);
   const last = view[view.length - 1];
   const totalOf = (p: TrendPoint) => SEV.filter((s) => !hidden.has(s.k)).reduce((a, s) => a + p[s.k], 0);
   if (view.length < 2) return <p className="text-sm text-muted">推移は2日分以上のデータがたまると表示されます。</p>;
