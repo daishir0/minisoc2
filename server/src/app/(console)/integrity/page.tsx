@@ -4,6 +4,7 @@ import { Masked, MaskFree } from '@/components/Mask';
 import { Card, ago } from '@/components/ui';
 import { q } from '@/lib/db';
 import { pathSeverity } from '@/lib/fileintegrity';
+import { ackFileChange } from '../actions';
 
 // File-integrity overview. The server holds a continuously-promoted baseline per host; once a day (at the
 // configured hour) that baseline is snapshotted (host_file_snap) and the day-over-day diff is persisted to
@@ -88,9 +89,12 @@ export default async function IntegrityPage({ searchParams }: { searchParams: Pr
     ? await q<Row>(
         `SELECT h.name AS host, d.host_id, d.path, d.kind, d.sev, d.old_sha, d.new_sha
          FROM host_file_day d JOIN hosts h ON h.id=d.host_id
-         WHERE d.day=$1 AND d.sev IN ('critical','high')
+         WHERE d.day=$1 AND d.sev IN ('critical','high') AND d.acked_at IS NULL
          ORDER BY CASE d.sev WHEN 'critical' THEN 0 ELSE 1 END, h.name, d.path`, [impDay])
     : [];
+  const impAckedN = impDay
+    ? Number((await q<{ n: string }>("SELECT count(*) AS n FROM host_file_day WHERE day=$1 AND sev IN ('critical','high') AND acked_at IS NOT NULL", [impDay]))[0].n)
+    : 0;
 
   // LIVE diff: current baseline vs the daily basepoint snapshot — which files changed since the basepoint
   // and how (from the received hashes). Works as soon as a basepoint exists (no need to wait for 2 AM).
@@ -120,14 +124,41 @@ export default async function IntegrityPage({ searchParams }: { searchParams: Pr
   return (
     <>
       <ExploreTabs />
-      <Card title={`要確認の重要なファイル変化${impDay ? `（最新 ${impDay}）` : ''}・${impRows.length}件`}>
+      <Card
+        title={`要確認の重要なファイル変化${impDay ? `（最新 ${impDay}）` : ''}・${impRows.length}件`}
+        right={impRows.length > 0 && impDay ? (
+          <form action={ackFileChange}><input type="hidden" name="day" value={impDay} /><input type="hidden" name="all" value="1" /><button className="text-xs text-accent">すべて確認済み</button></form>
+        ) : undefined}
+      >
         {impRows.length === 0 ? (
-          <p className="text-sm text-green-600">✅ 最新の日次差分に、重要（重大・高）なファイル変化はありません。下に全変化とベースライン状態を表示しています。</p>
+          <p className="text-sm text-green-600">✅ 最新の日次差分に、未確認の重要（重大・高）なファイル変化はありません。下に全変化とベースライン状態を表示しています。</p>
         ) : (
           <>
-            <p className="mb-3 text-xs text-muted">SSH鍵・sudoers・passwd/shadow・実行ファイル・cron・systemd など<b>重要パス</b>の変化です（最新の日次差分）。心当たりが無ければ各ホストで調査してください。</p>
-            <HostDiffList rows={impRows} />
+            <p className="mb-3 text-xs text-muted">SSH鍵・sudoers・passwd/shadow・実行ファイル・cron・systemd など<b>重要パス</b>の変化です（最新の日次差分）。心当たりが無ければ各ホストで調査し、確認できたら「確認済み」でバッジから外せます。</p>
+            <ul className="divide-y divide-line text-sm">
+              {impRows.map((d, i) => (
+                <li key={i} className="flex flex-wrap items-center gap-2 py-1.5">
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] ${SEV_CLS[d.sev] ?? 'bg-bg text-muted'}`}>{SEV_LABEL[d.sev] ?? d.sev}</span>
+                  <span className={`rounded px-1.5 py-0.5 text-[10px] ${KIND_CLS[d.kind] ?? 'bg-bg text-muted'}`}>{KIND_LABEL[d.kind] ?? d.kind}</span>
+                  <Link href={`/hosts/${d.host_id}`} className="text-xs text-accent"><Masked kind="host">{d.host}</Masked></Link>
+                  <span className="min-w-0 flex-1 break-all font-mono text-xs"><MaskFree>{d.path}</MaskFree></span>
+                  <span className="whitespace-nowrap font-mono text-[11px] text-muted">{changeText(d.kind, d.old_sha, d.new_sha)}</span>
+                  {impDay && (
+                    <form action={ackFileChange} className="shrink-0">
+                      <input type="hidden" name="day" value={impDay} /><input type="hidden" name="host_id" value={d.host_id} /><input type="hidden" name="path" value={d.path} />
+                      <button className="btn-ghost">確認済み</button>
+                    </form>
+                  )}
+                </li>
+              ))}
+            </ul>
           </>
+        )}
+        {impAckedN > 0 && impDay && (
+          <p className="mt-2 flex items-center gap-2 text-xs text-muted">
+            確認済み {impAckedN}件
+            <form action={ackFileChange}><input type="hidden" name="day" value={impDay} /><input type="hidden" name="all" value="1" /><input type="hidden" name="undo" value="1" /><button className="text-accent">すべて戻す</button></form>
+          </p>
         )}
       </Card>
       <Card title="ファイル改ざん検知（AIDE相当）">

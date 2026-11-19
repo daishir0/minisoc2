@@ -546,6 +546,24 @@ export async function ackDetection(fd: FormData): Promise<void> {
   revalidatePath('/actions');
 }
 
+// Acknowledge an important file change (clears it from the ファイル改ざん badge / "要確認" surface; the row
+// stays for history). all=1 acks every un-acked important change of that day; undo=1 restores it.
+export async function ackFileChange(fd: FormData): Promise<void> {
+  await requireUser();
+  const day = String(fd.get('day') ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+  const val = fd.get('undo') === '1' ? null : 'now()';
+  if (fd.get('all') === '1') {
+    await q(`UPDATE host_file_day SET acked_at=${val} WHERE day=$1 AND sev IN ('critical','high')${val ? ' AND acked_at IS NULL' : ' AND acked_at IS NOT NULL'}`, [day]);
+  } else {
+    const host = String(fd.get('host_id') ?? ''); const path = String(fd.get('path') ?? '');
+    if (!/^[0-9a-f-]{36}$/.test(host) || !path) return;
+    await q(`UPDATE host_file_day SET acked_at=${val} WHERE host_id=$1 AND day=$2 AND path=$3`, [host, day, path]);
+  }
+  revalidatePath('/integrity');
+  revalidatePath('/');
+}
+
 // "That was me": remember the IP so log rules stop alerting on it, and close the detection.
 export async function trustIp(fd: FormData): Promise<void> {
   await requireUser();
