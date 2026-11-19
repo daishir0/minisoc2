@@ -1,4 +1,3 @@
-import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { Masked } from '@/components/Mask';
 import { ExploreTabs } from '@/components/ExploreTabs';
@@ -63,7 +62,6 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
 
   return (
     <>
-      <Breadcrumbs items={[CRUMB.home, { label: "検知" }]} />
       <ExploreTabs />
     <Card title={`脆弱性：${STATUS_LABEL[status]} ${total}件${!showAll && sp.kev !== '1' ? '（KEV・緊急）' : ''}`}>
       {!showAll && sp.kev !== '1' && (

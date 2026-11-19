@@ -1,4 +1,3 @@
-import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Masked, MaskFree } from '@/components/Mask';
@@ -51,7 +50,6 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
 
   return (
     <>
-      <Breadcrumbs items={[CRUMB.home, { label: "検知" }]} />
       <ExploreTabs />
       {paused && (
         <div className="rounded-md border border-orange-400 bg-orange-50 px-4 py-3 text-sm text-orange-900 dark:bg-orange-950 dark:text-orange-100">

@@ -1,4 +1,3 @@
-import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Masked, MaskFree } from '@/components/Mask';
@@ -109,7 +108,6 @@ export default async function IntegrityPage({ searchParams }: { searchParams: Pr
 
   return (
     <>
-      <Breadcrumbs items={[CRUMB.home, { label: '検知' }]} />
       <ExploreTabs />
       <Card title="ファイル改ざん検知（AIDE相当）">
         <p className="text-sm text-muted">

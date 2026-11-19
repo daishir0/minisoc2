@@ -1,4 +1,3 @@
-import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { MaskFree } from '@/components/Mask';
@@ -28,7 +27,6 @@ export default async function AlertsPage({ searchParams }: { searchParams: Promi
   const otherN = Number((await q<{ n: string }>(`SELECT count(*) AS n FROM alerts WHERE status='open' AND NOT ${IMPORTANT}`))[0].n);
   return (
     <>
-    <Breadcrumbs items={[CRUMB.home, { label: "検知" }]} />
       <ExploreTabs />
     <Card
       title="検知の記録"

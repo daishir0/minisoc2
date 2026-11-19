@@ -1,4 +1,3 @@
-import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
 import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Masked, MaskFree } from '@/components/Mask';
@@ -59,7 +58,6 @@ export default async function ChangesPage({ searchParams }: { searchParams: Prom
 
   return (
     <>
-      <Breadcrumbs items={[CRUMB.home, { label: '検知' }]} />
       <ExploreTabs />
       <Card title="変化・活動の履歴（新しい順）">
         <form className="mb-3 grid grid-cols-2 gap-2 text-sm sm:flex sm:flex-wrap" action="/changes">

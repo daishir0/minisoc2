@@ -5,10 +5,13 @@ import { Masked, MaskProvider, MaskToggle } from '@/components/Mask';
 import { BottomTabs, TopNav } from '@/components/Nav';
 import { requireUser } from '@/lib/auth';
 import { MASK_COOKIE } from '@/lib/mask';
+import { navCounts } from '@/lib/navcounts';
 import { logout } from '../(auth)/actions';
 
 export default async function ConsoleLayout({ children }: { children: React.ReactNode }) {
   const user = await requireUser();
+  const counts = await navCounts();
+  const badges = { assets: counts.staleHosts, detect: counts.detectAlerts };
   const maskInitial = (await cookies()).get(MASK_COOKIE)?.value === '1';
   return (
     <MaskProvider initial={maskInitial}>
@@ -16,7 +19,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
       <header className="sticky top-0 z-30 border-b border-line bg-panel">
         <div className="mx-auto flex max-w-7xl items-center gap-3 px-4 py-2.5">
           <Link href="/" className="font-semibold">minisoc2</Link>
-          <TopNav />
+          <TopNav badges={badges} />
           <div className="ml-auto w-full max-w-md"><GlobalSearch /></div>
           <MaskToggle />
           <details className="group relative">
@@ -33,7 +36,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
         </div>
       </header>
       <main className="mx-auto max-w-7xl space-y-6 overflow-x-hidden px-4 py-6">{children}</main>
-      <BottomTabs />
+      <BottomTabs badges={badges} />
     </div>
     </MaskProvider>
   );
