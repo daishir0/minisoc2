@@ -70,7 +70,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
 
   // B: host × day heatmap (14d)
   const heat = await q<{ host_id: string; name: string; day: string; n: string }>(
-    `SELECT l.host_id, h.name, to_char(l.day,'YYYY-MM-DD') day, sum(l.lines) n FROM log_daily l JOIN hosts h ON h.id=l.host_id
+    `SELECT l.host_id, h.name, to_char(l.day,'YYYY-MM-DD') AS day, sum(l.lines) AS n FROM log_daily l JOIN hosts h ON h.id=l.host_id
      WHERE l.day > current_date - 14 ${hostOk ? 'AND l.host_id=$1' : ''} GROUP BY l.host_id, h.name, l.day`, hp);
 
   // ---- 詳細 (raw viewer) — same filter drives the lines ----
