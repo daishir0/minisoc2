@@ -2,7 +2,7 @@
 
 import { redirect } from 'next/navigation';
 import { headers } from 'next/headers';
-import { createAdmin, endSession, hasAdmin, startSession, verifyLogin } from '@/lib/auth';
+import { createAdmin, endSession, hasAdmin, safeNext, startSession, verifyLogin } from '@/lib/auth';
 import { isLimited, pickClientIp, rateLimited } from '@/lib/body';
 import { safeEqual } from '@/lib/secrets';
 import { verifyTotp } from '@/lib/totp';
@@ -33,7 +33,7 @@ export async function login(_: FormState, fd: FormData): Promise<FormState> {
   }
   await startSession(u.id);
   await recordEvent({ kind: 'ops', important: false, title: `ログイン成功：${String(fd.get('email') ?? '').trim().toLowerCase()}（${await ip()}）` });
-  redirect('/');
+  redirect(safeNext(String(fd.get('next') ?? '')) || '/');
 }
 
 // First-run setup is guarded by SETUP_TOKEN from the server environment,

@@ -1,5 +1,5 @@
 import bcrypt from 'bcryptjs';
-import { cookies } from 'next/headers';
+import { cookies, headers } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { q, q1 } from './db';
 import { decrypt, encrypt, randomToken, sha256hex } from './secrets';
@@ -123,8 +123,20 @@ export async function currentUser(): Promise<User | null> {
   return q1<User>('SELECT u.id, u.email FROM sessions s JOIN admin_users u ON u.id=s.user_id WHERE s.token_hash=$1 AND s.expires_at > now()', [sha256hex(t)]);
 }
 
+// Keep only a safe same-site path (leading single slash, not a protocol-relative "//", not the auth pages)
+// so a ?next= value can never become an open redirect to another origin.
+export function safeNext(raw: string | null | undefined): string {
+  if (!raw || !raw.startsWith('/') || raw.startsWith('//')) return '';
+  if (raw.startsWith('/login') || raw.startsWith('/setup')) return '';
+  return raw;
+}
+
 export async function requireUser(): Promise<User> {
   const u = await currentUser();
-  if (!u) redirect((await hasAdmin()) ? '/login' : '/setup');
+  if (!u) {
+    if (!(await hasAdmin())) redirect('/setup');
+    const next = safeNext((await headers()).get('x-pathname'));
+    redirect(next ? `/login?next=${encodeURIComponent(next)}` : '/login');
+  }
   return u;
 }
