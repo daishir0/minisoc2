@@ -37,17 +37,21 @@ export function TopNav({ badges = {} }: { badges?: NavBadges }) {
   );
 }
 
-export function BottomTabs({ badges = {} }: { badges?: NavBadges }) {
+// Mobile main nav: same destinations as the desktop TopNav, placed at the TOP (a sticky 3-up row under the
+// header) instead of a bottom bar, with large touch targets.
+export function MobileNav({ badges = {} }: { badges?: NavBadges }) {
   const path = usePathname();
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-20 grid grid-cols-3 border-t border-line bg-panel pb-[env(safe-area-inset-bottom)] md:hidden">
+    <nav className="grid grid-cols-3 border-t border-line bg-panel md:hidden">
       {SECTIONS.map((s) => {
         const b = badgeFor(s.href, badges);
+        const on = s.match(path);
         return (
-          <Link key={s.href} href={s.href} className={`relative flex flex-col items-center py-2 text-[11px] ${s.match(path) ? 'font-semibold text-accent' : 'text-muted'}`}>
-            <span className="text-lg leading-none">{s.icon}</span>
+          <Link key={s.href} href={s.href} className={`relative flex min-h-[48px] items-center justify-center gap-1.5 text-sm ${on ? 'bg-bg font-semibold text-fg' : 'text-muted'}`}>
+            <span className="text-base leading-none">{s.icon}</span>
             {s.label}
-            {b && <span className={`absolute right-[26%] top-1 rounded-full px-1.5 text-[10px] text-white ${b.tone}`}>{b.n}</span>}
+            {b && <span className={`rounded-full px-1.5 text-[10px] leading-4 text-white ${b.tone}`}>{b.n}</span>}
+            {on && <span className="absolute inset-x-0 bottom-0 h-0.5 bg-accent" />}
           </Link>
         );
       })}
