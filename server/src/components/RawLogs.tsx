@@ -19,7 +19,7 @@ const CHIP_LABEL: Record<string, (v: string, ctx: Ctx) => string> = {
 };
 interface Ctx { hosts: Record<string, string>; ruleTitles: Record<string, string> }
 
-export function RawLogs({ hosts, ruleTitles, retentionDays }: { hosts: Record<string, string>; ruleTitles: Record<string, string>; retentionDays: number }) {
+export function RawLogs({ hosts, ruleTitles, vhosts, retentionDays }: { hosts: Record<string, string>; ruleTitles: Record<string, string>; vhosts: string[]; retentionDays: number }) {
   const [filter, setFilter] = useState<LogFilter>({});
   const [lines, setLines] = useState<Line[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -71,6 +71,11 @@ export function RawLogs({ hosts, ruleTitles, retentionDays }: { hosts: Record<st
         <select value={filter.cat ?? ''} onChange={(e) => set({ cat: e.target.value })} className="input sm:w-auto">
           <option value="">カテゴリ：すべて</option>{Object.keys(CAT_LABEL).map((k) => <option key={k} value={k}>{CAT_LABEL[k]}</option>)}
         </select>
+        {vhosts.length > 0 && (
+          <select value={filter.vhost ?? ''} onChange={(e) => set({ vhost: e.target.value })} className="input sm:w-auto">
+            <option value="">サイト：すべて</option>{vhosts.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+        )}
         <input defaultValue={filter.status ?? ''} key={'st' + (filter.status ?? '')} onKeyDown={(e) => { if (e.key === 'Enter') set({ status: (e.target as HTMLInputElement).value.trim() }); }} onBlur={(e) => set({ status: e.target.value.trim() })} placeholder="ステータス(例 4xx,403)" className="input sm:w-36" />
         {!filter.day && (
           <select value={hours} onChange={(e) => set({ hours: e.target.value })} className="input sm:w-auto">

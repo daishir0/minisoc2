@@ -1,14 +1,15 @@
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Masked, MaskFree } from '@/components/Mask';
 import { Card, ago } from '@/components/ui';
-import { CategoryChart } from '@/components/CategoryChart';
+import { LogTrend, type TrendDim } from '@/components/LogTrend';
+import { LogSummary, type SummaryUnit } from '@/components/LogSummary';
 import { DrillLink } from '@/components/DrillLink';
 import { RawLogs } from '@/components/RawLogs';
 import { q } from '@/lib/db';
 import { rawIngestPaused } from '@/lib/logs';
 import { RULES } from '@/lib/rules';
 import { getPolicy } from '@/lib/settings';
-import { CAT } from '@/lib/logcat';
+import { CAT, CAT_LABEL } from '@/lib/logcat';
 import { alertFormAction, trustIp } from '../actions';
 
 const RULE_TITLE = Object.fromEntries(RULES.map((r) => [r.id, r.title]));
@@ -34,8 +35,8 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
        coalesce(sum(lines) FILTER (WHERE ${CAT.audit}),0) audit, coalesce(sum(lines) FILTER (WHERE ${CAT.sys}),0) sys
      FROM log_daily WHERE day > current_date - 30 ${hc} GROUP BY day ORDER BY day`, hp);
 
-  const web = await q<{ vhost: string; req: string; c4: string; c5: string; bytes: string }>(
-    `SELECT vhost, sum(req) req, sum(c4xx) c4, sum(c5xx) c5, sum(bytes) bytes FROM web_daily
+  const web = await q<{ vhost: string; req: string; c3: string; c4: string; c5: string; bytes: string }>(
+    `SELECT vhost, sum(req) req, sum(c3xx) c3, sum(c4xx) c4, sum(c5xx) c5, sum(bytes) bytes FROM web_daily
      WHERE day=(SELECT max(day) FROM web_daily) ${hostOk ? 'AND host_id=$1' : ''} GROUP BY vhost ORDER BY req DESC LIMIT 8`, hp);
 
   const authRows = await q<{ rule_id: string; n: string }>(
@@ -65,6 +66,70 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
   const hmVal = new Map(heat.map((r) => [`${r.host_id}|${r.day}`, Number(r.n)]));
   const hostMax = new Map(hmHosts.map(([id]) => [id, Math.max(1, ...hmDays.map((d) => hmVal.get(`${id}|${d}`) ?? 0))]));
   const heatColor = (rel: number) => rel <= 0 ? 'var(--bg)' : rel < 0.35 ? '#cfe6e8' : rel < 0.6 ? '#8fcbd0' : rel < 0.85 ? '#f6c343' : '#e8743b';
+
+  // --- per-host / per-vhost trend + summary data ---------------------------------------------------------
+  const PAL = ['#2563eb', '#0e7c86', '#8b5cf6', '#d97706', '#db2777', '#0ea5e9', '#65a30d', '#dc2626', '#7c3aed', '#059669', '#0891b2', '#ca8a04'];
+  const days30 = Array.from({ length: 30 }, (_, i) => new Date(Date.now() - (29 - i) * 86400_000).toISOString().slice(0, 10));
+  const days14 = days30.slice(-14);
+
+  // host dimension: total lines per host per day (30d)
+  const hostDays = await q<{ host_id: string; name: string; day: string; n: string }>(
+    `SELECT l.host_id, h.name, to_char(l.day,'YYYY-MM-DD') AS day, sum(l.lines) AS n FROM log_daily l JOIN hosts h ON h.id=l.host_id
+     WHERE l.day > current_date - 30 ${hostOk ? 'AND l.host_id=$1' : ''} GROUP BY l.host_id, h.name, l.day`, hp);
+  const hostIds = [...new Map(hostDays.map((r) => [r.host_id, r.name])).entries()];
+  const hostVal = new Map(hostDays.map((r) => [`${r.host_id}|${r.day}`, Number(r.n)]));
+  const lastLogDay = hostDays.reduce((m, r) => (r.day > m ? r.day : m), '');
+
+  // vhost dimension: requests per vhost per day (30d), top sites
+  const vhostDays = await q<{ vhost: string; day: string; n: string }>(
+    `SELECT vhost, to_char(day,'YYYY-MM-DD') AS day, sum(req) AS n FROM web_daily
+     WHERE day > current_date - 30 ${hostOk ? 'AND host_id=$1' : ''} GROUP BY vhost, day`, hp);
+  const vhostVal = new Map(vhostDays.map((r) => [`${r.vhost}|${r.day}`, Number(r.n)]));
+  const vhostTot = new Map<string, number>();
+  for (const r of vhostDays) vhostTot.set(r.vhost, (vhostTot.get(r.vhost) ?? 0) + Number(r.n));
+  const topVhosts = [...vhostTot.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([v]) => v);
+
+  // latest-day status classes + unacked file changes + open-threat counts, keyed by host
+  const webHost = await q<{ host_id: string; c3: string; c4: string; c5: string }>(
+    `SELECT host_id, sum(c3xx) c3, sum(c4xx) c4, sum(c5xx) c5 FROM web_daily
+     WHERE day=(SELECT max(day) FROM web_daily) ${hostOk ? 'AND host_id=$1' : ''} GROUP BY host_id`, hp);
+  const webHostMap = new Map(webHost.map((r) => [r.host_id, r]));
+  const fileHost = await q<{ host_id: string; n: string }>(
+    `SELECT host_id, count(*) n FROM host_file_day WHERE acked_at IS NULL AND day > current_date - 30 ${hostOk ? 'AND host_id=$1' : ''} GROUP BY host_id`, hp);
+  const fileHostMap = new Map(fileHost.map((r) => [r.host_id, Number(r.n)]));
+  const threatHostMap = new Map<string, number>();
+  for (const t of threats) if (t.host_id) threatHostMap.set(t.host_id, (threatHostMap.get(t.host_id) ?? 0) + 1);
+
+  const catColor: Record<string, string> = { web: '#0e7c86', auth: '#2563eb', sys: '#8b5cf6', audit: '#d97706' };
+  const catMap = new Map(catDays.map((d) => [d.day, d]));
+  const trendDims: TrendDim[] = [
+    { id: 'cat', label: 'カテゴリ', series: (['auth', 'web', 'sys', 'audit'] as const).map((k) => ({
+      key: k, label: CAT_LABEL[k], color: catColor[k], vals: days30.map((d) => Number(catMap.get(d)?.[k] ?? 0)), patch: { host: hostOk ?? '', cat: k },
+    })) },
+    { id: 'host', label: 'ホスト', series: hostIds.map(([id, name], i) => ({
+      key: id, label: name, color: PAL[i % PAL.length], vals: days30.map((d) => hostVal.get(`${id}|${d}`) ?? 0), patch: { host: id }, mask: 'host' as const, maskKey: id,
+    })) },
+    { id: 'vhost', label: 'vhost(アプリ)', series: topVhosts.map((v, i) => ({
+      key: v, label: v, color: PAL[i % PAL.length], vals: days30.map((d) => vhostVal.get(`${v}|${d}`) ?? 0), patch: { host: hostOk ?? '', cat: 'web', vhost: v }, mask: 'domain' as const, maskKey: v,
+    })) },
+  ];
+
+  const summaryUnits: SummaryUnit[] = [
+    { id: 'host', label: 'ホスト別', rows: hostIds.map(([id, name], i) => { const w = webHostMap.get(id);
+      return {
+        key: id, label: name, color: PAL[i % PAL.length],
+        logs: hostVal.get(`${id}|${lastLogDay}`) ?? 0, threats: threatHostMap.get(id) ?? 0,
+        s3: Number(w?.c3 ?? 0), s4: Number(w?.c4 ?? 0), s5: Number(w?.c5 ?? 0), files: fileHostMap.get(id) ?? 0,
+        spark: days14.map((d) => hostVal.get(`${id}|${d}`) ?? 0), patch: { host: id }, mask: 'host' as const, maskKey: id,
+      };
+    }).sort((a, b) => b.logs - a.logs) },
+    { id: 'vhost', label: 'vhost(アプリ)別', rows: web.map((w, i) => ({
+      key: w.vhost, label: w.vhost, color: PAL[i % PAL.length],
+      logs: Number(w.req), threats: null, s3: Number(w.c3), s4: Number(w.c4), s5: Number(w.c5), files: null,
+      spark: days14.map((d) => vhostVal.get(`${w.vhost}|${d}`) ?? 0), patch: { host: hostOk ?? '', cat: 'web', vhost: w.vhost }, mask: 'domain' as const, maskKey: w.vhost,
+    })) },
+  ];
+  const vhostList = [...new Set([...web.map((w) => w.vhost), ...topVhosts])].sort();
 
   // props for the client raw viewer
   const hostMap = Object.fromEntries(hosts.map((h) => [h.id, h.name]));
@@ -117,9 +182,14 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
         )}
       </Card>
 
-      {/* A */}
-      <Card title="ログ量の推移（30日・カテゴリ別）">
-        <CategoryChart host={hostOk ?? ''} points={catDays.map((d) => ({ day: d.day, web: Number(d.web), auth: Number(d.auth), audit: Number(d.audit), sys: Number(d.sys) }))} />
+      {/* A trend: category / host / vhost × stacked / split */}
+      <Card title="ログ量の推移（30日）">
+        <LogTrend days={days30} dims={trendDims} />
+      </Card>
+
+      {/* summary: per host / per vhost */}
+      <Card title="対象別の俯瞰（ログ量は最新日・脅威は24時間）">
+        <LogSummary units={summaryUnits} />
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -210,7 +280,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
       {/* raw logs (client, in-place) */}
       <div id="raw" className="scroll-mt-20">
         <Card title={`生ログ（条件連動・最大300行／保存 ${policy.logRetentionDays}日）`}>
-          <RawLogs hosts={hostMap} ruleTitles={ruleTitleMap} retentionDays={policy.logRetentionDays} />
+          <RawLogs hosts={hostMap} ruleTitles={ruleTitleMap} vhosts={vhostList} retentionDays={policy.logRetentionDays} />
         </Card>
       </div>
     </>
