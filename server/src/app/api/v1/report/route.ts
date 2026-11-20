@@ -1,11 +1,13 @@
 import { BodyError, clientIp, readJson } from '@/lib/body';
-import { authenticateHost, hostIpAllowed, ingestReport } from '@/lib/ingest';
+import { authenticateHost, hostIpAllowed, ingestReport, recordHostIp, rejectIpAlert } from '@/lib/ingest';
 import type { Report } from '@/lib/payload';
 
 export async function POST(req: Request) {
   const host = await authenticateHost(req.headers.get('authorization'));
   if (!host) return Response.json({ error: 'unauthorized' }, { status: 401 });
-  if (!(await hostIpAllowed(host, clientIp(req)))) return Response.json({ error: 'source address not allowed' }, { status: 403 });
+  const ip = clientIp(req);
+  await recordHostIp(host.id, ip);
+  if (!(await hostIpAllowed(host, ip))) { await rejectIpAlert(host, ip); return Response.json({ error: 'source address not allowed' }, { status: 403 }); }
   try {
     const r = await readJson<Report>(req);
     if (r.schema !== 1 || !r.host || !Array.isArray(r.packages) || !r.state) {

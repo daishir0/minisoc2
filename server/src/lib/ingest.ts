@@ -42,6 +42,37 @@ export async function enrollIpAllowed(ip: string): Promise<boolean> {
   return ipAllowed(ip, (await getPolicy()).defaultAllowedIps);
 }
 
+// Record the (authenticated) agent's source address so the console can show where an agent connects from
+// and offer a one-click "limit to this IP". Best-effort: telemetry must never break ingestion. Recorded
+// even when the IP is currently blocked, so a changed address stays visible for recovery. Keeps only the
+// most recent few distinct addresses per host.
+export async function recordHostIp(hostId: string, ip: string): Promise<void> {
+  if (!ip || ip === 'unknown') return;
+  try {
+    await q('UPDATE hosts SET last_ip=$2 WHERE id=$1', [hostId, ip]);
+    await q(
+      `INSERT INTO host_seen_ips(host_id, ip) VALUES ($1,$2)
+       ON CONFLICT (host_id, ip) DO UPDATE SET last_seen=now(), count=host_seen_ips.count+1`,
+      [hostId, ip]);
+    await q(
+      `DELETE FROM host_seen_ips WHERE host_id=$1 AND ip NOT IN
+         (SELECT ip FROM host_seen_ips WHERE host_id=$1 ORDER BY last_seen DESC LIMIT 5)`,
+      [hostId]);
+  } catch { /* malformed inet / race — ignore */ }
+}
+
+// A token-authenticated request arrived from an address outside the allow list. Raise one alert per
+// (host, ip) so a misconfiguration (or a changed agent IP that is now locked out) is noticed instead of
+// silently dropping reports.
+export async function rejectIpAlert(host: HostRow, ip: string): Promise<void> {
+  await raiseAlert({
+    kind: 'agent', severity: 'medium', hostId: host.id,
+    title: `[${host.name}] 許可外の接続元IPからの通信を拒否しました：${ip || '不明'}`,
+    detail: 'エージェントのIPが変わった可能性があります。ホスト詳細の「許可する接続元IP」を確認してください。',
+    dedupeKey: `agentip:${host.id}:${ip}`,
+  });
+}
+
 export async function enroll(token: string, hostname: string, platform: string, agentVersion: string): Promise<{ hostId: string; hostToken: string } | null> {
   return tx(async (c) => {
     const r = await c.query(

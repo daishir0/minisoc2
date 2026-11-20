@@ -6,6 +6,7 @@ import { Card, Sev, ago } from '@/components/ui';
 import { HostTypeCompare } from '@/components/HostTypeCompare';
 import { CRITICALITY, EXPOSURE } from '@/lib/systemmeta';
 import { q, q1 } from '@/lib/db';
+import { ipAllowed } from '@/lib/ipallow';
 import type { HostState } from '@/lib/payload';
 import { hostAction, pollPullNow, registerSystem, savePullAide, unregisterSystem } from '../../actions';
 import { PendingButton } from '@/components/PendingButton';
@@ -57,7 +58,7 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
     id: string; name: string; hostname: string; platform: string; os_name: string; os_version: string; kernel: string; arch: string;
     agent_version: string; enrolled_at: Date; last_seen_at: Date | null; disabled: boolean; state: Partial<HostState>; system_roots: string[]; allowed_ips: string[]; file_baseline_at: Date | null; kind: string;
     agent_config: AgentConfig | null; agent_meta: { invoke?: string; root?: boolean; home?: string; intervalHours?: number } | null;
-    collect_requested: boolean; last_checkin_at: Date | null; ws_seen_at: Date | null;
+    collect_requested: boolean; last_checkin_at: Date | null; ws_seen_at: Date | null; last_ip: string | null;
   }>('SELECT * FROM hosts WHERE id=$1', [id]);
   if (!h) notFound();
   const wsOnline = !!h.ws_seen_at && Date.now() - new Date(h.ws_seen_at).getTime() < 75_000;
@@ -68,6 +69,9 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
       'SELECT ssh_host, ssh_port, ssh_user, auth, every_hours, last_poll_at, last_error, aide_paths, aide_excludes FROM pull_targets WHERE host_id=$1', [id])
     : null;
   const fileBase = Number((await q<{ n: string }>('SELECT count(*) AS n FROM host_file_baseline WHERE host_id=$1', [id]))[0].n);
+  // Observed source addresses (push hosts only; pull hosts connect outbound so inbound IP is N/A).
+  const seenIps = h.kind === 'pull' ? [] : await q<{ ip: string; last_seen: Date; count: string }>(
+    'SELECT host(ip) AS ip, last_seen, count FROM host_seen_ips WHERE host_id=$1 ORDER BY last_seen DESC LIMIT 5', [id]);
   // Per-host vulnerability trend (same stacked chart as the home page, scoped to this host).
   const htrend = await q<{ day: string; kev: string; critical: string; high: string; medium: string; low: string }>(
     `SELECT to_char(day, 'YYYY-MM-DD') AS day, sum(kev) AS kev, sum(critical) AS critical, sum(high) AS high, sum(medium) AS medium, sum(low) AS low FROM daily_snapshots ds
@@ -230,12 +234,44 @@ export default async function HostPage({ params }: { params: Promise<{ id: strin
           </div>
           <p className="mt-1 text-xs text-muted">「今すぐ再照合」＝取得済みのインベントリを使って脆弱性を今すぐ再判定します（新しく公表されたCVEや設定変更の反映に使います。ホストへは接続しません）。「無効にする」＝{pull ? 'このホストの定期収集を止めます' : 'このホストからのAPI報告を拒否します'}。</p>
           {!pull && (
-            <form action={hostAction} className="mt-3 space-y-1">
-              <input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="allowips" />
-              <span className="block text-xs text-muted">許可する接続元IP（エージェント型のみ）。<b>エージェントを配置したホストのIP</b>を入れると、そのIPからのAPI報告だけを受け付けます。空欄=制限なし。設定すると全体の既定より優先。CIDR可（例 203.0.113.0/24）、改行区切り。</span>
-              <textarea className="input font-mono text-xs" name="allowedIps" rows={2} defaultValue={(h.allowed_ips ?? []).join('\n')} placeholder="203.0.113.0/24" />
-              <PendingButton className="btn-ghost" pendingText="保存中…">許可IPを保存</PendingButton>
-            </form>
+            <>
+              <div className="mt-3">
+                <span className="block text-xs font-semibold text-muted">接続元IP</span>
+                {seenIps.length === 0 ? (
+                  <p className="mt-0.5 text-xs text-muted">まだ接続元IPを観測していません（エージェントの初回報告後に表示されます）。</p>
+                ) : (
+                  <>
+                    <p className="mt-0.5 text-xs text-muted">直近の接続元：<span className="font-mono"><Masked kind="addr">{h.last_ip ?? seenIps[0].ip}</Masked></span>（{ago(seenIps[0].last_seen)}）</p>
+                    {h.allowed_ips.length > 0 && !ipAllowed(h.last_ip ?? seenIps[0].ip, h.allowed_ips) && (
+                      <p className="mt-1 rounded bg-amber-50 px-2 py-1 text-xs text-amber-800 dark:bg-amber-950 dark:text-amber-100">⚠ いま許可中のIPと実際の接続元が一致していません。収集が止まる前に、下のボタンで現在の接続元を許可してください。</p>
+                    )}
+                    <ul className="mt-1.5 space-y-1">
+                      {seenIps.map((s) => { const allowed = ipAllowed(s.ip, h.allowed_ips);
+                        return (
+                          <li key={s.ip} className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
+                            <span className="font-mono"><Masked kind="addr">{s.ip}</Masked></span>
+                            <span className="text-muted">{ago(s.last_seen)} · {Number(s.count).toLocaleString()}回</span>
+                            {allowed ? <span className="text-green-600">許可済み✓</span> : (
+                              <form action={hostAction}>
+                                <input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="allowip" /><input type="hidden" name="ip" value={s.ip} />
+                                <PendingButton className="btn-ghost px-2 py-0.5 text-xs" pendingText="設定中…">このIPに限定</PendingButton>
+                              </form>
+                            )}
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    <p className="mt-1 text-[11px] text-muted">「このIPに限定」＝このアドレスからのAPI報告だけを受け付けます（現在の接続元を選べば自分を締め出しません）。</p>
+                  </>
+                )}
+              </div>
+              <form action={hostAction} className="mt-3 space-y-1">
+                <input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="allowips" />
+                <span className="block text-xs text-muted">許可する接続元IP（手入力）。<b>エージェントを配置したホストのIP</b>を入れると、そのIPからのAPI報告だけを受け付けます。空欄=制限なし。設定すると全体の既定より優先。CIDR可（例 203.0.113.0/24）、改行区切り。</span>
+                <textarea className="input font-mono text-xs" name="allowedIps" rows={2} defaultValue={(h.allowed_ips ?? []).join('\n')} placeholder="203.0.113.0/24" />
+                <PendingButton className="btn-ghost" pendingText="保存中…">許可IPを保存</PendingButton>
+              </form>
+            </>
           )}
           <form action={hostAction} className="mt-3 flex gap-2">
             <input type="hidden" name="id" value={h.id} /><input type="hidden" name="op" value="delete" />

@@ -7,7 +7,7 @@ import { disableTotp, enableTotp, getTotp, requireUser, startTotpSecret, addUser
 import { verifyTotp } from '@/lib/totp';
 import { pollPull, safePath } from '@/lib/pullssh';
 import { recordEvent } from '@/lib/events';
-import { q } from '@/lib/db';
+import { q, q1 } from '@/lib/db';
 import { sendMail } from '@/lib/mail';
 import { randomToken, sha256hex } from '@/lib/secrets';
 import { VEX_JUSTIFICATIONS } from '@/lib/vex';
@@ -370,6 +370,16 @@ export async function hostAction(fd: FormData): Promise<void> {
     const ips = parseAllowList(String(fd.get('allowedIps') ?? '')).ok.slice(0, 200);
     await q('UPDATE hosts SET allowed_ips=$2 WHERE id=$1', [id, ips]);
     await opsEvent(`ホストの許可IPを更新（${ips.length ? ips.length + '件' : '制限なし'}）`, id);
+  }
+  if (op === 'allowip') {
+    // one-click: append a single observed source IP to the host's allow list
+    const { ok } = parseAllowList(String(fd.get('ip') ?? ''));
+    if (ok.length) {
+      const cur = (await q1<{ allowed_ips: string[] }>('SELECT allowed_ips FROM hosts WHERE id=$1', [id]))?.allowed_ips ?? [];
+      const next = [...new Set([...cur, ok[0]])].slice(0, 200);
+      await q('UPDATE hosts SET allowed_ips=$2 WHERE id=$1', [id, next]);
+      await opsEvent(`ホストの許可IPに ${ok[0]} を追加（接続元に限定）`, id);
+    }
   }
   if (op === 'disable') await q('UPDATE hosts SET disabled=true WHERE id=$1', [id]);
   if (op === 'enable') await q('UPDATE hosts SET disabled=false, needs_match=true WHERE id=$1', [id]);
