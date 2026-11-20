@@ -119,7 +119,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
 
       {/* A */}
       <Card title="ログ量の推移（30日・カテゴリ別）">
-        <CategoryChart points={catDays.map((d) => ({ day: d.day, web: Number(d.web), auth: Number(d.auth), audit: Number(d.audit), sys: Number(d.sys) }))} />
+        <CategoryChart host={hostOk ?? ''} points={catDays.map((d) => ({ day: d.day, web: Number(d.web), auth: Number(d.auth), audit: Number(d.audit), sys: Number(d.sys) }))} />
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
@@ -128,7 +128,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
           <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
             <span className="text-muted">ステータスで絞る：</span>
             {[['2xx', 'text-green-700'], ['3xx', 'text-muted'], ['4xx', 'text-amber-700'], ['5xx', 'text-red-700']].map(([s, c]) => (
-              <DrillLink key={s} patch={{ cat: 'web', status: s, source: '', vhost: '', rule: '', q: '', day: '' }} className={`rounded-full border border-line px-2 py-0.5 ${c} hover:border-accent`}>{s}</DrillLink>
+              <DrillLink key={s} patch={{ host: hostOk ?? '', cat: 'web', status: s, source: '', vhost: '', rule: '', q: '', day: '' }} className={`rounded-full border border-line px-2 py-0.5 ${c} hover:border-accent`}>{s}</DrillLink>
             ))}
           </div>
           {web.length === 0 ? <p className="text-sm text-muted">Webアクセスログの集計がありません。</p> : (
@@ -138,9 +138,9 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
                 {web.map((w) => { const req = Number(w.req), err = req ? ((Number(w.c4) + Number(w.c5)) / req) * 100 : 0; const col = err >= 5 ? 'text-red-600' : err >= 2 ? 'text-amber-600' : 'text-green-600';
                   return (
                     <tr key={w.vhost}>
-                      <td><DrillLink patch={{ cat: 'web', vhost: w.vhost, source: '', status: '', rule: '', q: '', day: '' }} className="text-left text-accent">{w.vhost}</DrillLink></td>
+                      <td><DrillLink patch={{ host: hostOk ?? '', cat: 'web', vhost: w.vhost, source: '', status: '', rule: '', q: '', day: '' }} className="text-left text-accent">{w.vhost}</DrillLink></td>
                       <td className="whitespace-nowrap text-right font-mono">{req.toLocaleString()}</td>
-                      <td className="whitespace-nowrap"><span className={`font-mono ${col}`}>{err.toFixed(1)}%</span>{Number(w.c5) > 0 && <DrillLink patch={{ cat: 'web', vhost: w.vhost, status: '5xx', source: '', rule: '', q: '', day: '' }} className="ml-2 text-xs text-accent">5xx {w.c5}</DrillLink>}</td>
+                      <td className="whitespace-nowrap"><span className={`font-mono ${col}`}>{err.toFixed(1)}%</span>{Number(w.c5) > 0 && <DrillLink patch={{ host: hostOk ?? '', cat: 'web', vhost: w.vhost, status: '5xx', source: '', rule: '', q: '', day: '' }} className="ml-2 text-xs text-accent">5xx {w.c5}</DrillLink>}</td>
                       <td className="whitespace-nowrap text-right font-mono">{fmtBytes(Number(w.bytes))}</td>
                     </tr>
                   );
@@ -154,7 +154,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
         <Card title="認証の俯瞰（7日）">
           <div className="grid grid-cols-2 gap-2 text-sm">
             {([['SSH初見IP成功', authN('ssh_accept_new_ip'), 'Accepted', 'text-red-600'], ['SSH失敗集中', authN('ssh_bruteforce'), 'Failed', 'text-amber-600'], ['sudo初見ユーザー', authN('sudo_new_user'), 'COMMAND=', 'text-muted'], ['sudo認証失敗', authN('sudo_auth_failure'), 'authentication failure', 'text-amber-600']] as [string, number, string, string][]).map(([label, n, qq, col]) => (
-              <DrillLink key={label} patch={{ cat: 'auth', q: qq, source: '', vhost: '', rule: '', status: '', day: '' }} className="rounded-lg border border-line bg-bg p-3 text-left hover:border-accent">
+              <DrillLink key={label} patch={{ host: hostOk ?? '', cat: 'auth', q: qq, source: '', vhost: '', rule: '', status: '', day: '' }} className="rounded-lg border border-line bg-bg p-3 text-left hover:border-accent">
                 <div className="text-xs text-muted">{label}</div><div className={`font-mono text-xl font-bold ${n ? col : 'text-muted'}`}>{n}</div>
               </DrillLink>
             ))}
@@ -162,7 +162,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
           {brute.length > 0 && (
             <div className="mt-3"><p className="mb-1 text-xs font-semibold">失敗元の上位IP（7日）</p>
               <ul className="divide-y divide-line text-sm">
-                {brute.map((b) => <li key={b.grp} className="flex items-center justify-between py-1.5"><DrillLink patch={{ cat: 'auth', q: b.grp, source: '', vhost: '', rule: '', status: '', day: '' }} className="font-mono text-accent"><Masked kind="addr">{b.grp}</Masked></DrillLink><span className="font-mono text-xs text-muted">×{b.n}</span></li>)}
+                {brute.map((b) => <li key={b.grp} className="flex items-center justify-between py-1.5"><DrillLink patch={{ host: hostOk ?? '', cat: 'auth', q: b.grp, source: '', vhost: '', rule: '', status: '', day: '' }} className="font-mono text-accent"><Masked kind="addr">{b.grp}</Masked></DrillLink><span className="font-mono text-xs text-muted">×{b.n}</span></li>)}
               </ul>
             </div>
           )}
@@ -176,7 +176,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
             {ruleTop.map((r) => { const wk = Number(r.wk), d = wk - Number(r.prev), max = Math.max(1, ...ruleTop.map((x) => Number(x.wk)));
               return (
                 <li key={r.rule_id} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3">
-                  <div className="min-w-0"><DrillLink patch={{ rule: r.rule_id, cat: '', source: '', vhost: '', status: '', q: '', day: '' }} className="block truncate text-left text-sm text-accent hover:underline">{title(r.rule_id)}</DrillLink>
+                  <div className="min-w-0"><DrillLink patch={{ host: hostOk ?? '', rule: r.rule_id, cat: '', source: '', vhost: '', status: '', q: '', day: '' }} className="block truncate text-left text-sm text-accent hover:underline">{title(r.rule_id)}</DrillLink>
                     <div className="mt-1 h-2 rounded" style={{ background: 'var(--soft)' }}><div className="h-full rounded" style={{ width: `${Math.max(4, (wk / max) * 100)}%`, background: 'var(--accent)' }} /></div></div>
                   <Spark v={series(r.rule_id)} />
                   <span className="font-mono text-sm tabular-nums">{wk.toLocaleString()}</span>

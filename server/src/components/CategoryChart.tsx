@@ -13,7 +13,8 @@ const LS_KEY = 'logs.catHidden';
 // Category-stacked daily log volume. Legend entries are checkboxes (uncheck to drop a series from the
 // stack); the choice persists in localStorage so the chart looks the same on the next visit. Clicking a
 // bar segment or a legend name opens that category's raw logs.
-export function CategoryChart({ points }: { points: CatPoint[] }) {
+export function CategoryChart({ points, host }: { points: CatPoint[]; host?: string }) {
+  const H = host || '';
   const [hidden, setHidden] = useState<Set<Key>>(new Set());
   const [ready, setReady] = useState(false);
   useEffect(() => {
@@ -25,8 +26,8 @@ export function CategoryChart({ points }: { points: CatPoint[] }) {
     try { localStorage.setItem(LS_KEY, JSON.stringify([...n])); } catch { /* ignore */ }
     return n;
   });
-  const drillCat = (k: Key) => applyLogFilter({ cat: k, day: '', source: '', vhost: '', rule: '', q: '' }, { scroll: true });
-  const drillDay = (k: Key, day: string) => applyLogFilter({ cat: k, day, source: '', vhost: '', rule: '', q: '', status: '' }, { scroll: true });
+  const drillCat = (k: Key) => applyLogFilter({ host: H, cat: k, day: '', source: '', vhost: '', rule: '', q: '' }, { scroll: true });
+  const drillDay = (k: Key, day: string) => applyLogFilter({ host: H, cat: k, day, source: '', vhost: '', rule: '', q: '', status: '' }, { scroll: true });
   const vis = CATS.filter((c) => !hidden.has(c[0]));
   const tot = (p: CatPoint) => vis.reduce((a, c) => a + (p[c[0]] || 0), 0);
   const max = Math.max(1, ...points.map(tot));

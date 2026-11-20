@@ -64,6 +64,10 @@ export function RawLogs({ hosts, ruleTitles, retentionDays }: { hosts: Record<st
       )}
 
       <form className="mb-3 grid grid-cols-2 gap-2 text-sm sm:flex sm:flex-wrap" onSubmit={(e) => e.preventDefault()}>
+        <select value={filter.host ?? ''} onChange={(e) => set({ host: e.target.value })} className="input sm:w-auto">
+          <option value="">ホスト：すべて</option>
+          {Object.entries(hosts).map(([id, name]) => <option key={id} value={id}><Masked kind="host">{name}</Masked></option>)}
+        </select>
         <select value={filter.cat ?? ''} onChange={(e) => set({ cat: e.target.value })} className="input sm:w-auto">
           <option value="">カテゴリ：すべて</option>{Object.keys(CAT_LABEL).map((k) => <option key={k} value={k}>{CAT_LABEL[k]}</option>)}
         </select>
