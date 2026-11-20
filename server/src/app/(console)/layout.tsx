@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Masked, MaskProvider, MaskToggle } from '@/components/Mask';
 import { MobileNav, TopNav } from '@/components/Nav';
 import { SearchToggle } from '@/components/SearchToggle';
+import { MenuAutoClose } from '@/components/MenuAutoClose';
 import { requireUser } from '@/lib/auth';
 import { MASK_COOKIE } from '@/lib/mask';
 import { navCounts } from '@/lib/navcounts';
@@ -22,7 +23,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
           <TopNav badges={badges} />
           <div className="ml-auto flex items-center gap-1">
             <SearchToggle />
-            <details className="group relative">
+            <details data-autoclose className="group relative">
               <summary className="btn-ghost list-none" aria-label="設定とアカウント">⚙</summary>
               <div className="absolute right-0 z-40 mt-2 w-60 rounded-lg border border-line bg-panel p-2 shadow-lg">
                 <div className="px-1 pb-2"><MaskToggle /></div>
@@ -39,6 +40,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
         </div>
         <MobileNav badges={badges} />
       </header>
+      <MenuAutoClose />
       <main className="mx-auto max-w-7xl space-y-6 overflow-x-hidden px-4 py-6">{children}</main>
     </div>
     </MaskProvider>

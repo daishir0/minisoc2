@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Masked, MaskFree } from '@/components/Mask';
 import { Card, ago } from '@/components/ui';
+import { CategoryChart } from '@/components/CategoryChart';
 import { q } from '@/lib/db';
 import { rawIngestPaused } from '@/lib/logs';
 import { RULES } from '@/lib/rules';
@@ -79,18 +80,31 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
   if (hostOk) { params.push(hostOk); where.push(`l.host_id=$${params.length}`); }
   if (sp.source) { params.push(sp.source); where.push(`l.source=$${params.length}`); }
   const catOk = sp.cat && sp.cat in CAT ? (sp.cat as keyof typeof CAT) : undefined;
-  if (catOk) where.push(`(l.${CAT[catOk]})`);
+  if (catOk) where.push(`(${CAT[catOk]})`); // raw_logs is the only table with `source`, so no `l.` prefix (the NOT-fragment breaks with one)
   const vhostOk = sp.vhost && /^[\w.*-]{1,120}$/.test(sp.vhost) ? sp.vhost : undefined;
   if (vhostOk) { params.push(`%${vhostOk}%`); where.push(`l.source ILIKE $${params.length}`); }
   const statusOk = sp.status && /^[1-5](xx|\d\d)$/.test(sp.status) ? sp.status : undefined;
   if (statusOk) { const pat = statusOk.endsWith('xx') ? `" ${statusOk[0]}[0-9][0-9] ` : `" ${statusOk} `; params.push(pat); where.push(`l.message ~ $${params.length}`); }
   if (sp.q) { params.push(`%${sp.q}%`); where.push(`l.message ILIKE $${params.length}`); }
   const hours = Math.min(24 * 365, Math.max(1, Number(sp.hours ?? 24) || 24));
-  params.push(String(hours));
-  where.push(`l.received_at > now() - ($${params.length} || ' hours')::interval`);
-  const lines = await q<{ received_at: Date; ts: Date | null; source: string; message: string; host: string }>(
-    `SELECT l.received_at, l.ts, l.source, l.message, h.name AS host FROM raw_logs l JOIN hosts h ON h.id=l.host_id
-     WHERE ${where.join(' AND ')} ORDER BY l.received_at DESC, l.ts DESC NULLS LAST LIMIT 300`, params);
+  const ruleOk = sp.rule && /^[\w:.-]{1,80}$/.test(sp.rule) ? sp.rule : undefined;
+  type LineRow = { received_at: Date; ts: Date | null; source: string; message: string; host: string };
+  let lines: LineRow[];
+  if (ruleOk) {
+    // Show the actual lines that triggered this detection rule (from log_hits), not a text search.
+    const p: unknown[] = [ruleOk]; let w = 'lh.rule_id=$1';
+    if (hostOk) { p.push(hostOk); w += ` AND lh.host_id=$${p.length}`; }
+    p.push(String(hours)); w += ` AND lh.ts > now() - ($${p.length} || ' hours')::interval`;
+    lines = await q<LineRow>(
+      `SELECT lh.ts AS received_at, lh.ts, 'rule:' || lh.rule_id AS source, lh.sample AS message, h.name AS host
+       FROM log_hits lh JOIN hosts h ON h.id=lh.host_id WHERE ${w} ORDER BY lh.ts DESC LIMIT 300`, p);
+  } else {
+    params.push(String(hours));
+    where.push(`l.received_at > now() - ($${params.length} || ' hours')::interval`);
+    lines = await q<LineRow>(
+      `SELECT l.received_at, l.ts, l.source, l.message, h.name AS host FROM raw_logs l JOIN hosts h ON h.id=l.host_id
+       WHERE ${where.join(' AND ')} ORDER BY l.received_at DESC, l.ts DESC NULLS LAST LIMIT 300`, params);
+  }
 
   // link helper: carry the current params, set/clear some, land on the raw section
   const link = (patch: Record<string, string | undefined>, anchor = '#raw') => {
@@ -103,10 +117,9 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
   if (vhostOk) conds.push({ k: 'vhost', label: `サイト：${vhostOk}` });
   if (statusOk) conds.push({ k: 'status', label: `ステータス：${statusOk}` });
   if (sp.source) conds.push({ k: 'source', label: `ソース：${sp.source.replace(/^file:/, '')}` });
+  if (ruleOk) conds.push({ k: 'rule', label: `ルール：${title(ruleOk)}` });
   if (sp.q) conds.push({ k: 'q', label: `検索：${sp.q}` });
 
-  const catMax = Math.max(1, ...catDays.map((d) => Number(d.web) + Number(d.auth) + Number(d.audit) + Number(d.sys)));
-  const CATC: [keyof typeof CAT, string][] = [['auth', '#2563eb'], ['web', '#0e7c86'], ['sys', '#8b5cf6'], ['audit', '#d97706']];
   // heatmap pivot
   const hmHosts = [...new Map(heat.map((r) => [r.host_id, r.name])).entries()];
   const hmDays = [...new Set(heat.map((r) => r.day))].sort();
@@ -158,31 +171,20 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
         )}
       </Card>
 
-      {/* A: category volume */}
+      {/* A: category volume (client: legend checkboxes + localStorage + click-to-drill) */}
       <Card title="ログ量の推移（30日・カテゴリ別）">
-        {catDays.length < 2 ? <p className="text-sm text-muted">まだ集計がたまっていません。</p> : (
-          <>
-            <div className="flex items-end gap-1" style={{ height: 150 }}>
-              {catDays.map((d) => {
-                const tot = Number(d.web) + Number(d.auth) + Number(d.audit) + Number(d.sys);
-                return (
-                  <div key={d.day} title={`${d.day}: ${tot.toLocaleString()}行`} className="flex flex-1 flex-col justify-end" style={{ maxWidth: 26, height: '100%' }}>
-                    {CATC.map(([k, c]) => { const h = (Number(d[k]) / catMax) * 140; return h > 0.3 ? <div key={k} style={{ height: `${h}px`, background: c }} /> : null; })}
-                  </div>
-                );
-              })}
-            </div>
-            <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted">
-              {CATC.map(([k, c]) => <Link key={k} href={link({ cat: k, source: undefined, vhost: undefined, status: undefined })} className="inline-flex items-center gap-1.5 hover:text-fg"><span className="inline-block h-3 w-3 rounded-sm" style={{ background: c }} />{CAT_LABEL[k]}</Link>)}
-              <span className="ml-auto">凡例をタップでそのカテゴリの生ログへ</span>
-            </div>
-          </>
-        )}
+        <CategoryChart points={catDays.map((d) => ({ day: d.day, web: Number(d.web), auth: Number(d.auth), audit: Number(d.audit), sys: Number(d.sys) }))} />
       </Card>
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* D: web */}
         <Card title="Web の俯瞰（最新日・サイト別）">
+          <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="text-muted">ステータスで絞る：</span>
+            {[['2xx', 'text-green-700'], ['3xx', 'text-muted'], ['4xx', 'text-amber-700'], ['5xx', 'text-red-700']].map(([s, c]) => (
+              <Link key={s} href={link({ cat: 'web', status: s, source: undefined, vhost: undefined, q: undefined })} className={`rounded-full border border-line px-2 py-0.5 ${c} hover:border-accent`}>{s}</Link>
+            ))}
+          </div>
           {web.length === 0 ? <p className="text-sm text-muted">Webアクセスログの集計がありません。</p> : (
             <div className="overflow-x-auto"><table className="tbl">
               <thead><tr><th>サイト</th><th className="text-right">req</th><th>エラー率</th><th className="text-right">転送</th></tr></thead>
@@ -232,7 +234,7 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
             {ruleTop.map((r) => { const wk = Number(r.wk), prev = Number(r.prev), d = wk - prev, max = Math.max(1, ...ruleTop.map((x) => Number(x.wk)));
               return (
                 <li key={r.rule_id} className="grid grid-cols-[1fr_auto_auto] items-center gap-3">
-                  <div className="min-w-0"><div className="truncate text-sm">{title(r.rule_id)}</div><div className="mt-1 h-2 rounded bg-soft" style={{ background: 'var(--soft)' }}><div className="h-full rounded" style={{ width: `${Math.max(4, (wk / max) * 100)}%`, background: 'var(--accent)' }} /></div></div>
+                  <div className="min-w-0"><Link href={link({ rule: r.rule_id, cat: undefined, source: undefined, vhost: undefined, status: undefined, q: undefined })} className="block truncate text-sm text-accent hover:underline">{title(r.rule_id)}</Link><div className="mt-1 h-2 rounded bg-soft" style={{ background: 'var(--soft)' }}><div className="h-full rounded" style={{ width: `${Math.max(4, (wk / max) * 100)}%`, background: 'var(--accent)' }} /></div></div>
                   <span className="font-mono text-sm tabular-nums">{wk.toLocaleString()}</span>
                   <span className={`font-mono text-xs tabular-nums ${d > 0 ? 'text-red-600' : d < 0 ? 'text-green-600' : 'text-muted'}`}>{d > 0 ? '▲' : d < 0 ? '▼' : '－'}{Math.abs(d)}</span>
                 </li>
