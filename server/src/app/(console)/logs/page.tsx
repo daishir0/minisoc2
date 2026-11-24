@@ -1,20 +1,16 @@
 import { ExploreTabs } from '@/components/ExploreTabs';
 import { Masked, MaskFree } from '@/components/Mask';
 import { Card, ago } from '@/components/ui';
-import { LogTrend, type TrendDim } from '@/components/LogTrend';
-import { LogSummary, type SummaryUnit } from '@/components/LogSummary';
 import { DrillLink } from '@/components/DrillLink';
 import { RawLogs } from '@/components/RawLogs';
+import { LogExplorer } from '@/components/LogExplorer';
 import { q } from '@/lib/db';
 import { rawIngestPaused } from '@/lib/logs';
 import { RULES } from '@/lib/rules';
 import { getPolicy } from '@/lib/settings';
-import { CAT, CAT_LABEL } from '@/lib/logcat';
 import { alertFormAction, trustIp } from '../actions';
 
-const RULE_TITLE = Object.fromEntries(RULES.map((r) => [r.id, r.title]));
 const IP_RE = /(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{0,4}:[0-9a-f:]{2,38})(?!.*\d{1,3}(?:\.\d{1,3}){3})/i;
-const fmtBytes = (b: number) => (b >= 1 << 30 ? (b / (1 << 30)).toFixed(1) + ' GB' : b >= 1 << 20 ? (b / (1 << 20)).toFixed(1) + ' MB' : b >= 1024 ? Math.round(b / 1024) + ' KB' : b + ' B');
 
 export default async function LogsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
@@ -22,125 +18,16 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
   const paused = await rawIngestPaused();
   const hosts = await q<{ id: string; name: string }>('SELECT id, name FROM hosts ORDER BY name');
   const hostOk = sp.host && /^[0-9a-f-]{36}$/.test(sp.host) ? sp.host : undefined;
-  const hc = hostOk ? 'AND host_id=$1' : '';
-  const hp = hostOk ? [hostOk] : [];
 
   const threats = await q<{ id: string; host: string | null; host_id: string | null; title: string; created_at: Date }>(
     `SELECT a.id, h.name AS host, a.host_id, a.title, a.created_at FROM alerts a LEFT JOIN hosts h ON h.id=a.host_id
-     WHERE a.kind='log' AND a.status='open' AND a.created_at > now() - interval '24 hours' ${hostOk ? 'AND a.host_id=$1' : ''} ORDER BY a.created_at DESC`, hp);
+     WHERE a.kind='log' AND a.status='open' AND a.created_at > now() - interval '24 hours' ${hostOk ? 'AND a.host_id=$1' : ''} ORDER BY a.created_at DESC`, hostOk ? [hostOk] : []);
 
-  const catDays = await q<{ day: string; web: string; auth: string; audit: string; sys: string }>(
-    `SELECT to_char(day,'YYYY-MM-DD') AS day,
-       coalesce(sum(lines) FILTER (WHERE ${CAT.web}),0) web, coalesce(sum(lines) FILTER (WHERE ${CAT.auth}),0) auth,
-       coalesce(sum(lines) FILTER (WHERE ${CAT.audit}),0) audit, coalesce(sum(lines) FILTER (WHERE ${CAT.sys}),0) sys
-     FROM log_daily WHERE day > current_date - 30 ${hc} GROUP BY day ORDER BY day`, hp);
-
-  const web = await q<{ vhost: string; req: string; c3: string; c4: string; c5: string; bytes: string }>(
-    `SELECT vhost, sum(req) req, sum(c3xx) c3, sum(c4xx) c4, sum(c5xx) c5, sum(bytes) bytes FROM web_daily
-     WHERE day=(SELECT max(day) FROM web_daily) ${hostOk ? 'AND host_id=$1' : ''} GROUP BY vhost ORDER BY req DESC LIMIT 8`, hp);
-
-  const authRows = await q<{ rule_id: string; n: string }>(
-    `SELECT rule_id, sum(hits) n FROM log_rule_daily WHERE day > current_date - 7
-       AND rule_id IN ('ssh_accept_new_ip','ssh_bruteforce','sudo_new_user','sudo_auth_failure') ${hc} GROUP BY rule_id`, hp);
-  const authN = (id: string) => Number(authRows.find((r) => r.rule_id === id)?.n ?? 0);
-  const brute = await q<{ grp: string; n: string }>(
-    `SELECT grp, count(*) n FROM log_hits WHERE rule_id='ssh_bruteforce' AND ts > now() - interval '7 days' ${hostOk ? 'AND host_id=$1' : ''} AND grp<>'' GROUP BY grp ORDER BY 2 DESC LIMIT 3`, hp);
-
-  const ruleTop = await q<{ rule_id: string; wk: string; prev: string }>(
-    `SELECT rule_id, coalesce(sum(hits) FILTER (WHERE day > current_date - 7),0) wk, coalesce(sum(hits) FILTER (WHERE day <= current_date - 7),0) prev
-     FROM log_rule_daily WHERE day > current_date - 14 ${hc} GROUP BY rule_id
-     HAVING sum(hits) FILTER (WHERE day > current_date - 7) > 0 ORDER BY wk DESC LIMIT 8`, hp);
-  const rsRows = await q<{ rule_id: string; day: string; hits: string }>(
-    `SELECT rule_id, to_char(day,'YYYY-MM-DD') AS day, sum(hits) AS hits FROM log_rule_daily WHERE day > current_date - 14 ${hc} GROUP BY rule_id, day`, hp);
-  const dayKeys = Array.from({ length: 14 }, (_, i) => new Date(Date.now() - (13 - i) * 86400_000).toISOString().slice(0, 10));
-  const series = (ruleId: string) => { const m = new Map(rsRows.filter((r) => r.rule_id === ruleId).map((r) => [r.day, Number(r.hits)])); return dayKeys.map((d) => m.get(d) ?? 0); };
   const sigmaTitles = Object.fromEntries((await q<{ id: string; title: string }>('SELECT id, title FROM sigma_rules')).map((r) => [r.id, `Sigma: ${r.title}`]));
-  const title = (id: string) => RULE_TITLE[id] ?? sigmaTitles[id] ?? id;
-  const sigmaFeed = (await q<{ item_count: number | null }>("SELECT item_count FROM feed_status WHERE name='sigma'"))[0];
-
-  const heat = await q<{ host_id: string; name: string; day: string; n: string }>(
-    `SELECT l.host_id, h.name, to_char(l.day,'YYYY-MM-DD') AS day, sum(l.lines) AS n FROM log_daily l JOIN hosts h ON h.id=l.host_id
-     WHERE l.day > current_date - 14 ${hostOk ? 'AND l.host_id=$1' : ''} GROUP BY l.host_id, h.name, l.day`, hp);
-  const hmHosts = [...new Map(heat.map((r) => [r.host_id, r.name])).entries()];
-  const hmDays = [...new Set(heat.map((r) => r.day))].sort();
-  const hmVal = new Map(heat.map((r) => [`${r.host_id}|${r.day}`, Number(r.n)]));
-  const hostMax = new Map(hmHosts.map(([id]) => [id, Math.max(1, ...hmDays.map((d) => hmVal.get(`${id}|${d}`) ?? 0))]));
-  const heatColor = (rel: number) => rel <= 0 ? 'var(--bg)' : rel < 0.35 ? '#cfe6e8' : rel < 0.6 ? '#8fcbd0' : rel < 0.85 ? '#f6c343' : '#e8743b';
-
-  // --- per-host / per-vhost trend + summary data ---------------------------------------------------------
-  const PAL = ['#2563eb', '#0e7c86', '#8b5cf6', '#d97706', '#db2777', '#0ea5e9', '#65a30d', '#dc2626', '#7c3aed', '#059669', '#0891b2', '#ca8a04'];
-  const days30 = Array.from({ length: 30 }, (_, i) => new Date(Date.now() - (29 - i) * 86400_000).toISOString().slice(0, 10));
-  const days14 = days30.slice(-14);
-
-  // host dimension: total lines per host per day (30d)
-  const hostDays = await q<{ host_id: string; name: string; day: string; n: string }>(
-    `SELECT l.host_id, h.name, to_char(l.day,'YYYY-MM-DD') AS day, sum(l.lines) AS n FROM log_daily l JOIN hosts h ON h.id=l.host_id
-     WHERE l.day > current_date - 30 ${hostOk ? 'AND l.host_id=$1' : ''} GROUP BY l.host_id, h.name, l.day`, hp);
-  const hostIds = [...new Map(hostDays.map((r) => [r.host_id, r.name])).entries()];
-  const hostVal = new Map(hostDays.map((r) => [`${r.host_id}|${r.day}`, Number(r.n)]));
-  const lastLogDay = hostDays.reduce((m, r) => (r.day > m ? r.day : m), '');
-
-  // vhost dimension: requests per vhost per day (30d), top sites
-  const vhostDays = await q<{ vhost: string; day: string; n: string }>(
-    `SELECT vhost, to_char(day,'YYYY-MM-DD') AS day, sum(req) AS n FROM web_daily
-     WHERE day > current_date - 30 ${hostOk ? 'AND host_id=$1' : ''} GROUP BY vhost, day`, hp);
-  const vhostVal = new Map(vhostDays.map((r) => [`${r.vhost}|${r.day}`, Number(r.n)]));
-  const vhostTot = new Map<string, number>();
-  for (const r of vhostDays) vhostTot.set(r.vhost, (vhostTot.get(r.vhost) ?? 0) + Number(r.n));
-  const topVhosts = [...vhostTot.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([v]) => v);
-
-  // latest-day status classes + unacked file changes + open-threat counts, keyed by host
-  const webHost = await q<{ host_id: string; c3: string; c4: string; c5: string }>(
-    `SELECT host_id, sum(c3xx) c3, sum(c4xx) c4, sum(c5xx) c5 FROM web_daily
-     WHERE day=(SELECT max(day) FROM web_daily) ${hostOk ? 'AND host_id=$1' : ''} GROUP BY host_id`, hp);
-  const webHostMap = new Map(webHost.map((r) => [r.host_id, r]));
-  const fileHost = await q<{ host_id: string; n: string }>(
-    `SELECT host_id, count(*) n FROM host_file_day WHERE acked_at IS NULL AND day > current_date - 30 ${hostOk ? 'AND host_id=$1' : ''} GROUP BY host_id`, hp);
-  const fileHostMap = new Map(fileHost.map((r) => [r.host_id, Number(r.n)]));
-  const threatHostMap = new Map<string, number>();
-  for (const t of threats) if (t.host_id) threatHostMap.set(t.host_id, (threatHostMap.get(t.host_id) ?? 0) + 1);
-
-  const catColor: Record<string, string> = { web: '#0e7c86', auth: '#2563eb', sys: '#8b5cf6', audit: '#d97706' };
-  const catMap = new Map(catDays.map((d) => [d.day, d]));
-  const trendDims: TrendDim[] = [
-    { id: 'cat', label: 'カテゴリ', series: (['auth', 'web', 'sys', 'audit'] as const).map((k) => ({
-      key: k, label: CAT_LABEL[k], color: catColor[k], vals: days30.map((d) => Number(catMap.get(d)?.[k] ?? 0)), patch: { host: hostOk ?? '', cat: k },
-    })) },
-    { id: 'host', label: 'ホスト', series: hostIds.map(([id, name], i) => ({
-      key: id, label: name, color: PAL[i % PAL.length], vals: days30.map((d) => hostVal.get(`${id}|${d}`) ?? 0), patch: { host: id }, mask: 'host' as const, maskKey: id,
-    })) },
-    { id: 'vhost', label: 'vhost(アプリ)', series: topVhosts.map((v, i) => ({
-      key: v, label: v, color: PAL[i % PAL.length], vals: days30.map((d) => vhostVal.get(`${v}|${d}`) ?? 0), patch: { host: hostOk ?? '', cat: 'web', vhost: v }, mask: 'domain' as const, maskKey: v,
-    })) },
-  ];
-
-  const summaryUnits: SummaryUnit[] = [
-    { id: 'host', label: 'ホスト別', rows: hostIds.map(([id, name], i) => { const w = webHostMap.get(id);
-      return {
-        key: id, label: name, color: PAL[i % PAL.length],
-        logs: hostVal.get(`${id}|${lastLogDay}`) ?? 0, threats: threatHostMap.get(id) ?? 0,
-        s3: Number(w?.c3 ?? 0), s4: Number(w?.c4 ?? 0), s5: Number(w?.c5 ?? 0), files: fileHostMap.get(id) ?? 0,
-        spark: days14.map((d) => hostVal.get(`${id}|${d}`) ?? 0), patch: { host: id }, mask: 'host' as const, maskKey: id,
-      };
-    }).sort((a, b) => b.logs - a.logs) },
-    { id: 'vhost', label: 'vhost(アプリ)別', rows: web.map((w, i) => ({
-      key: w.vhost, label: w.vhost, color: PAL[i % PAL.length],
-      logs: Number(w.req), threats: null, s3: Number(w.c3), s4: Number(w.c4), s5: Number(w.c5), files: null,
-      spark: days14.map((d) => vhostVal.get(`${w.vhost}|${d}`) ?? 0), patch: { host: hostOk ?? '', cat: 'web', vhost: w.vhost }, mask: 'domain' as const, maskKey: w.vhost,
-    })) },
-  ];
-  const vhostList = [...new Set([...web.map((w) => w.vhost), ...topVhosts])].sort();
-
-  // props for the client raw viewer
   const hostMap = Object.fromEntries(hosts.map((h) => [h.id, h.name]));
   const ruleTitleMap = Object.fromEntries([...RULES.map((r) => [r.id, r.title]), ...Object.entries(sigmaTitles)]);
+  const vhostList = (await q<{ vhost: string }>("SELECT DISTINCT vhost FROM web_daily WHERE day > current_date - 35 ORDER BY vhost")).map((r) => r.vhost);
   const sevClear = { source: '', vhost: '', rule: '', q: '', status: '', day: '' } as const;
-
-  const Spark = ({ v }: { v: number[] }) => {
-    const W = 80, H = 20, max = Math.max(1, ...v);
-    const pts = v.map((x, i) => `${(i / (v.length - 1)) * W},${H - (x / max) * (H - 2) - 1}`).join(' ');
-    return <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" style={{ width: 80, height: 20 }} aria-hidden="true"><polyline points={pts} fill="none" stroke="var(--accent)" strokeWidth="1.3" vectorEffect="non-scaling-stroke" /></svg>;
-  };
 
   return (
     <>
@@ -150,16 +37,6 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
           ディスク使用率が上限（{policy.diskGuardPercent}%）を超えたため、生ログの保存を停止しています。ルール判定と集計は続けています。
         </div>
       )}
-
-      <form className="flex flex-wrap items-center gap-2 text-sm" action="/logs">
-        <span className="text-xs text-muted">ホスト</span>
-        <select name="host" defaultValue={hostOk ?? ''} className="input sm:w-auto">
-          <option value="">すべて</option>
-          {hosts.map((h) => <option key={h.id} value={h.id}><Masked kind="host">{h.name}</Masked></option>)}
-        </select>
-        <button className="btn">表示</button>
-        <span className="ml-auto text-xs text-muted">俯瞰の棒・凡例・セル・ルールをクリック → 下の生ログがその場で切り替わります</span>
-      </form>
 
       <Card title={`ログ脅威（直近24時間・未対応 ${threats.length}件）`}>
         {threats.length === 0 ? <p className="text-sm text-green-600">✅ 直近24時間に未対応のログ脅威はありません。</p> : (
@@ -182,100 +59,10 @@ export default async function LogsPage({ searchParams }: { searchParams: Promise
         )}
       </Card>
 
-      {/* A trend: category / host / vhost × stacked / split */}
-      <Card title="ログ量の推移（30日）">
-        <LogTrend days={days30} dims={trendDims} />
+      {/* One BI panel: measure × dimension × chart, drill-down to the raw logs below */}
+      <Card title="ログエクスプローラ">
+        <LogExplorer hosts={hostMap} ruleTitles={ruleTitleMap} />
       </Card>
-
-      {/* summary: per host / per vhost */}
-      <Card title="対象別の俯瞰（ログ量は最新日・脅威は24時間）">
-        <LogSummary units={summaryUnits} />
-      </Card>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        {/* D web */}
-        <Card title="Web の俯瞰（最新日・サイト別）">
-          <div className="mb-3 flex flex-wrap items-center gap-1.5 text-xs">
-            <span className="text-muted">ステータスで絞る：</span>
-            {[['2xx', 'text-green-700'], ['3xx', 'text-muted'], ['4xx', 'text-amber-700'], ['5xx', 'text-red-700']].map(([s, c]) => (
-              <DrillLink key={s} patch={{ host: hostOk ?? '', cat: 'web', status: s, source: '', vhost: '', rule: '', q: '', day: '' }} className={`rounded-full border border-line px-2 py-0.5 ${c} hover:border-accent`}>{s}</DrillLink>
-            ))}
-          </div>
-          {web.length === 0 ? <p className="text-sm text-muted">Webアクセスログの集計がありません。</p> : (
-            <div className="overflow-x-auto"><table className="tbl">
-              <thead><tr><th>サイト</th><th className="text-right">req</th><th>エラー率</th><th className="text-right">転送</th></tr></thead>
-              <tbody>
-                {web.map((w) => { const req = Number(w.req), err = req ? ((Number(w.c4) + Number(w.c5)) / req) * 100 : 0; const col = err >= 5 ? 'text-red-600' : err >= 2 ? 'text-amber-600' : 'text-green-600';
-                  return (
-                    <tr key={w.vhost}>
-                      <td><DrillLink patch={{ host: hostOk ?? '', cat: 'web', vhost: w.vhost, source: '', status: '', rule: '', q: '', day: '' }} className="text-left text-accent">{w.vhost}</DrillLink></td>
-                      <td className="whitespace-nowrap text-right font-mono">{req.toLocaleString()}</td>
-                      <td className="whitespace-nowrap"><span className={`font-mono ${col}`}>{err.toFixed(1)}%</span>{Number(w.c5) > 0 && <DrillLink patch={{ host: hostOk ?? '', cat: 'web', vhost: w.vhost, status: '5xx', source: '', rule: '', q: '', day: '' }} className="ml-2 text-xs text-accent">5xx {w.c5}</DrillLink>}</td>
-                      <td className="whitespace-nowrap text-right font-mono">{fmtBytes(Number(w.bytes))}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table></div>
-          )}
-        </Card>
-
-        {/* C auth */}
-        <Card title="認証の俯瞰（7日）">
-          <div className="grid grid-cols-2 gap-2 text-sm">
-            {([['SSH初見IP成功', authN('ssh_accept_new_ip'), 'Accepted', 'text-red-600'], ['SSH失敗集中', authN('ssh_bruteforce'), 'Failed', 'text-amber-600'], ['sudo初見ユーザー', authN('sudo_new_user'), 'COMMAND=', 'text-muted'], ['sudo認証失敗', authN('sudo_auth_failure'), 'authentication failure', 'text-amber-600']] as [string, number, string, string][]).map(([label, n, qq, col]) => (
-              <DrillLink key={label} patch={{ host: hostOk ?? '', cat: 'auth', q: qq, source: '', vhost: '', rule: '', status: '', day: '' }} className="rounded-lg border border-line bg-bg p-3 text-left hover:border-accent">
-                <div className="text-xs text-muted">{label}</div><div className={`font-mono text-xl font-bold ${n ? col : 'text-muted'}`}>{n}</div>
-              </DrillLink>
-            ))}
-          </div>
-          {brute.length > 0 && (
-            <div className="mt-3"><p className="mb-1 text-xs font-semibold">失敗元の上位IP（7日）</p>
-              <ul className="divide-y divide-line text-sm">
-                {brute.map((b) => <li key={b.grp} className="flex items-center justify-between py-1.5"><DrillLink patch={{ host: hostOk ?? '', cat: 'auth', q: b.grp, source: '', vhost: '', rule: '', status: '', day: '' }} className="font-mono text-accent"><Masked kind="addr">{b.grp}</Masked></DrillLink><span className="font-mono text-xs text-muted">×{b.n}</span></li>)}
-              </ul>
-            </div>
-          )}
-        </Card>
-      </div>
-
-      {/* E rule top + sparkline */}
-      <Card title="検知ルール Top（7日・前週比／右は14日の推移）" right={<span className="text-xs text-muted">Sigma {sigmaFeed?.item_count ?? 0} ルール適用中</span>}>
-        {ruleTop.length === 0 ? <p className="text-sm text-muted">一致はありません。</p> : (
-          <ul className="space-y-1.5">
-            {ruleTop.map((r) => { const wk = Number(r.wk), d = wk - Number(r.prev), max = Math.max(1, ...ruleTop.map((x) => Number(x.wk)));
-              return (
-                <li key={r.rule_id} className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-3">
-                  <div className="min-w-0"><DrillLink patch={{ host: hostOk ?? '', rule: r.rule_id, cat: '', source: '', vhost: '', status: '', q: '', day: '' }} className="block truncate text-left text-sm text-accent hover:underline">{title(r.rule_id)}</DrillLink>
-                    <div className="mt-1 h-2 rounded" style={{ background: 'var(--soft)' }}><div className="h-full rounded" style={{ width: `${Math.max(4, (wk / max) * 100)}%`, background: 'var(--accent)' }} /></div></div>
-                  <Spark v={series(r.rule_id)} />
-                  <span className="font-mono text-sm tabular-nums">{wk.toLocaleString()}</span>
-                  <span className={`font-mono text-xs tabular-nums ${d > 0 ? 'text-red-600' : d < 0 ? 'text-green-600' : 'text-muted'}`}>{d > 0 ? '▲' : d < 0 ? '▼' : '－'}{Math.abs(d)}</span>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </Card>
-
-      {/* B heatmap */}
-      {hmHosts.length > 0 && hmDays.length > 1 && (
-        <Card title="ホスト×日 ログ量ヒートマップ（14日・各ホストの平常比）">
-          <div className="space-y-1 text-xs">
-            {hmHosts.map(([id, name]) => (
-              <div key={id} className="grid items-center gap-1.5" style={{ gridTemplateColumns: '84px 1fr' }}>
-                <DrillLink patch={{ host: id, cat: '', source: '', vhost: '', status: '', rule: '', q: '', day: '' }} className="truncate text-left font-mono text-accent"><Masked kind="host">{name}</Masked></DrillLink>
-                <div className="grid gap-0.5" style={{ gridTemplateColumns: `repeat(${hmDays.length}, 1fr)` }}>
-                  {hmDays.map((dd) => { const v = hmVal.get(`${id}|${dd}`) ?? 0; const rel = v / (hostMax.get(id) ?? 1);
-                    return <DrillLink key={dd} patch={{ host: id, day: dd, cat: '', source: '', vhost: '', status: '', rule: '', q: '' }} title={`${name} ${dd}: ${v.toLocaleString()}行 → この日の生ログ`} className="block w-full" ><span className="block" style={{ aspectRatio: '1', borderRadius: 3, background: heatColor(rel) }} /></DrillLink>;
-                  })}
-                </div>
-              </div>
-            ))}
-            <div className="grid gap-1.5" style={{ gridTemplateColumns: '84px 1fr' }}><span /><div className="flex justify-between text-[11px] text-muted"><span>14日前</span><span>今日</span></div></div>
-          </div>
-        </Card>
-      )}
 
       {/* raw logs (client, in-place) */}
       <div id="raw" className="scroll-mt-20">
