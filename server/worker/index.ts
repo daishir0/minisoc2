@@ -495,17 +495,26 @@ async function webDaily() {
   const last = await getSetting<{ day: string }>('last_web_check', { day: '' });
   if (last.day === y) return;
   const pol = await getPolicy();
+  // Ignored source IPs (own servers / monitoring / E2E) must not look like a traffic change: subtract their
+  // per-day request count from the request-spike/blackout check, and exclude them from the per-IP transfer
+  // alert. 4xx/5xx stay on web_daily (no per-IP status breakdown to net out).
+  const ignore = pol.ignoreIps ?? [];
   const rows = await q<{ host_id: string; name: string; vhost: string; pull: boolean; hist: string;
     req: string; areq: string; c4: string; a4: string; c5: string; a5: string }>(
-    `SELECT w.host_id, h.name, w.vhost, EXISTS(SELECT 1 FROM pull_targets pt WHERE pt.host_id=w.host_id) AS pull,
-       count(*) FILTER (WHERE day < $1::date) AS hist,
-       coalesce(max(req)  FILTER (WHERE day = $1::date), 0) AS req,  avg(req)  FILTER (WHERE day < $1::date) AS areq,
-       coalesce(max(c4xx) FILTER (WHERE day = $1::date), 0) AS c4,   avg(c4xx) FILTER (WHERE day < $1::date) AS a4,
-       coalesce(max(c5xx) FILTER (WHERE day = $1::date), 0) AS c5,   avg(c5xx) FILTER (WHERE day < $1::date) AS a5
+    `WITH ig AS (
+       SELECT host_id, vhost, day, sum(req) AS ireq FROM web_ip_daily
+       WHERE day BETWEEN $1::date - 7 AND $1::date AND ip = ANY($2::text[]) GROUP BY host_id, vhost, day)
+     SELECT w.host_id, h.name, w.vhost, EXISTS(SELECT 1 FROM pull_targets pt WHERE pt.host_id=w.host_id) AS pull,
+       count(*) FILTER (WHERE w.day < $1::date) AS hist,
+       coalesce(max(greatest(w.req - coalesce(ig.ireq,0),0)) FILTER (WHERE w.day = $1::date), 0) AS req,
+       avg(greatest(w.req - coalesce(ig.ireq,0),0)) FILTER (WHERE w.day < $1::date) AS areq,
+       coalesce(max(w.c4xx) FILTER (WHERE w.day = $1::date), 0) AS c4,   avg(w.c4xx) FILTER (WHERE w.day < $1::date) AS a4,
+       coalesce(max(w.c5xx) FILTER (WHERE w.day = $1::date), 0) AS c5,   avg(w.c5xx) FILTER (WHERE w.day < $1::date) AS a5
      FROM web_daily w JOIN hosts h ON h.id=w.host_id
+       LEFT JOIN ig ON ig.host_id=w.host_id AND ig.vhost=w.vhost AND ig.day=w.day
      WHERE w.day BETWEEN $1::date - 7 AND $1::date
      GROUP BY w.host_id, h.name, w.vhost`,
-    [y],
+    [y, ignore],
   );
   const mult = pol.webSpikeMult;
   let n = 0;
@@ -546,8 +555,8 @@ async function webDaily() {
     `SELECT wi.host_id, h.name, wi.vhost, wi.ip, wi.bytes,
        EXISTS(SELECT 1 FROM pull_targets pt WHERE pt.host_id=wi.host_id) AS pull
      FROM web_ip_daily wi JOIN hosts h ON h.id=wi.host_id
-     WHERE wi.day = $1::date AND wi.bytes >= $2`,
-    [y, floorBytes],
+     WHERE wi.day = $1::date AND wi.bytes >= $2 AND NOT (wi.ip = ANY($3::text[]))`,
+    [y, floorBytes, ignore],
   );
   for (const r of ips) {
     await raiseAlert({
