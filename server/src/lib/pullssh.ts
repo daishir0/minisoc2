@@ -226,6 +226,9 @@ export function parsePorts(text: string): { proto: 'tcp' | 'tcp6'; addr: string;
 }
 
 export async function pollPull(hostId: string): Promise<{ ok: boolean; packages?: number; logs?: number; error?: string }> {
+  // Pull hosts have no agent to time the scan, so measure the server-side SSH collection ourselves — the
+  // synthesized report then carries a real duration instead of a misleading 0.0秒.
+  const t0 = Date.now();
   const t = await q1<PullTarget>('SELECT * FROM pull_targets WHERE host_id=$1', [hostId]);
   const host = await q1<HostRow>('SELECT id, name, hostname, baseline_done, disabled, state, system_roots, allowed_ips FROM hosts WHERE id=$1', [hostId]);
   if (!t || !host) return { ok: false, error: 'not found' };
@@ -269,8 +272,8 @@ export async function pollPull(hostId: string): Promise<{ ok: boolean; packages?
   const report: Report = {
     schema: 1,
     agentVersion: 'pull-ssh',
-    startedAt: new Date().toISOString(),
-    durationMs: 0,
+    startedAt: new Date(t0).toISOString(),
+    durationMs: Date.now() - t0,
     host: {
       hostname: t.ssh_host, platform: 'linux',
       osName: osrel.NAME ?? (uname.split(' ')[0] || 'Linux'), osVersion: osrel.VERSION_ID ?? '',
