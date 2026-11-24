@@ -126,26 +126,48 @@ export function buildImmediateMails(toSend: PendingAlert[], vulnRows: VulnRow[],
     }
   }
 
-  // 2) watched-CVE detections: one mail. A watched CVE often spans many packages → collapse per host × CVE.
-  const watches = toSend.filter((a) => a.kind === 'watch');
-  if (watches.length) {
-    const byHost = new Map<string, { host_id: string | null; cves: Set<string> }>();
-    for (const a of watches) {
-      const h = hostOf(a);
-      const g = byHost.get(h) ?? { host_id: a.host_id, cves: new Set<string>() };
-      g.cves.add(cveOf(a.title)); byHost.set(h, g);
+  // 2a) watched CVEs with activity ON A HOST (detected / fix available / confirmed by distro advisory /
+  //     resolved). One mail, grouped per host × CVE, each with the correct state and a link to that CVE.
+  const watchState = (dk: string) =>
+    dk.startsWith('watch-fixed') ? '解消' : dk.startsWith('watch-fixable') ? '対処可能（修正版あり）' : dk.startsWith('watch-distro') ? '影響あり（配布元勧告で確認）' : '検出';
+  const onHost = toSend.filter((a) => a.kind === 'watch' && a.host_id);
+  if (onHost.length) {
+    const seen = new Set<string>();
+    const byHost = new Map<string, { host_id: string; lines: string[]; hasFind: boolean }>();
+    for (const a of onHost) {
+      const host = hostOf(a); const cve = cveOf(a.title); const st = watchState(a.dedupe_key);
+      const key = `${host}|${cve}|${st}`; if (seen.has(key)) continue; seen.add(key);
+      const g = byHost.get(host) ?? { host_id: a.host_id as string, lines: [], hasFind: false };
+      g.lines.push(`  ・${cve} ${st}　▶ ${url}/findings?host=${a.host_id}&q=${cve}&all=1`);
+      if (st === '検出' || st.startsWith('影響あり')) g.hasFind = true;
+      byHost.set(host, g);
     }
     const hosts = [...byHost.keys()];
-    const lines = ['ウォッチ登録したCVEを検出しました。', ''];
-    for (const [host, g] of byHost) {
-      for (const cve of g.cves) {
-        lines.push(`・${host}：${cve}`);
-        lines.push(`   ▶ 対象を開く ${url}/findings?host=${g.host_id}&q=${cve}&all=1`);
-      }
-    }
+    const anyFind = [...byHost.values()].some((g) => g.hasFind);
+    const lines = [anyFind ? 'ウォッチ登録したCVEをホストで検出しました。' : 'ウォッチ登録したCVEに動きがありました（修正版の公開・解消など）。', ''];
+    for (const [host, g] of byHost) { lines.push(`■ ${host}`); lines.push(...g.lines); }
     const subject = hosts.length === 1
-      ? `即時通知：${hosts[0]} でウォッチ中CVEを検出`
-      : `即時通知：ウォッチ中CVEを検出（${hosts[0]} ほか）`;
+      ? `即時通知：${hosts[0]} でウォッチ中CVE${anyFind ? 'を検出' : 'に動き'}`
+      : `即時通知：ウォッチ中CVE${anyFind ? 'を検出' : 'に動き'}（${hosts[0]} ほか）`;
+    mails.push({ subject, body: lines.join('\n') });
+  }
+
+  // 2b) watched CVEs with an UPSTREAM FIX published while affecting NO host (host_id is null). This is
+  //     informational — not a detection — so it must not say "検出" or link to a (non-existent) host.
+  const upstream = toSend.filter((a) => a.kind === 'watch' && !a.host_id);
+  if (upstream.length) {
+    const seen = new Set<string>();
+    const lines = ['監視中のCVEに上流で修正版が公開されました（現在どのホストにも影響は検出されていません。対応は任意です）。', ''];
+    for (const a of upstream) {
+      const cve = cveOf(a.title); if (seen.has(cve)) continue; seen.add(cve);
+      const fix = (a.title.match(/（([^（）]+)）/) ?? [])[1];
+      lines.push(`・${cve}${fix ? `　修正版：${fix}` : ''}`);
+      lines.push(`   ▶ 詳細 ${url}/cve/${cve}`);
+    }
+    const cves = [...seen];
+    const subject = cves.length === 1
+      ? `即時通知：ウォッチ中CVE ${cves[0]} に上流修正が公開`
+      : `即時通知：ウォッチ中CVEに上流修正が公開（${cves[0]} ほか）`;
     mails.push({ subject, body: lines.join('\n') });
   }
 
