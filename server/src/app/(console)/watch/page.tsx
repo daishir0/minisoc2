@@ -13,8 +13,11 @@ export default async function WatchPage({ searchParams }: { searchParams: Promis
     `SELECT w.cve, w.note, w.created_at, w.status, w.resolved_at,
        count(f.id) FILTER (WHERE f.status='open') AS open, count(f.id) FILTER (WHERE f.status='resolved') AS resolved,
        string_agg(DISTINCT h.name, ', ') FILTER (WHERE f.status='open') AS hosts,
-       (SELECT summary FROM vulns v WHERE v.id=w.cve OR w.cve = ANY(v.aliases) LIMIT 1) AS summary,
-       (SELECT severity FROM vulns v WHERE v.id=w.cve OR w.cve = ANY(v.aliases) LIMIT 1) AS severity
+       coalesce(nullif((SELECT data->'nvd'->>'description' FROM cve_lookups cl WHERE cl.cve=w.cve), ''),
+                nullif((SELECT data->'ghsa'->0->>'summary' FROM cve_lookups cl WHERE cl.cve=w.cve), ''),
+                (SELECT summary FROM vulns v WHERE v.id=w.cve OR w.cve = ANY(v.aliases) LIMIT 1)) AS summary,
+       coalesce(lower(nullif((SELECT data->'nvd'->>'severity' FROM cve_lookups cl WHERE cl.cve=w.cve), '')),
+                (SELECT severity FROM vulns v WHERE v.id=w.cve OR w.cve = ANY(v.aliases) LIMIT 1)) AS severity
      FROM watch_cves w
        LEFT JOIN findings f ON (f.vuln_id=w.cve OR EXISTS (SELECT 1 FROM vulns v WHERE v.id=f.vuln_id AND w.cve = ANY(v.aliases)))
        LEFT JOIN hosts h ON h.id=f.host_id
