@@ -347,7 +347,7 @@ export async function addWatch(_: Result, fd: FormData): Promise<Result> {
   await requireUser();
   const cve = String(fd.get('cve') ?? '').trim().toUpperCase();
   if (!/^(CVE-\d{4}-\d{4,}|GHSA-[a-z0-9-]+)$/i.test(cve)) return { error: 'CVE-2026-12345 のような形式で入力してください。' };
-  await q('INSERT INTO watch_cves(cve, note) VALUES ($1,$2) ON CONFLICT (cve) DO UPDATE SET note=EXCLUDED.note', [cve, String(fd.get('note') ?? '').slice(0, 500)]);
+  await q("INSERT INTO watch_cves(cve, note) VALUES ($1,$2) ON CONFLICT (cve) DO UPDATE SET note=EXCLUDED.note, status='watching', archived_at=NULL, resolved_at=NULL", [cve, String(fd.get('note') ?? '').slice(0, 500)]);
   await q('UPDATE hosts SET needs_match=true WHERE NOT disabled');
   await opsEvent(`${cve} を CVE監視に追加`);
   revalidatePath('/watch');
@@ -356,8 +356,20 @@ export async function addWatch(_: Result, fd: FormData): Promise<Result> {
 
 export async function removeWatch(fd: FormData): Promise<void> {
   await requireUser();
-  await q('DELETE FROM watch_cves WHERE cve=$1', [String(fd.get('cve'))]);
-  await opsEvent(`${String(fd.get('cve'))} を CVE監視から解除`);
+  const cve = String(fd.get('cve'));
+  const op = String(fd.get('op') ?? 'delete');
+  if (op === 'archive') {
+    // Retire: keep the row for history but stop all matching + external lookups.
+    await q("UPDATE watch_cves SET status='archived', archived_at=now() WHERE cve=$1", [cve]);
+    await opsEvent(`${cve} の監視をアーカイブ（履歴は保持）`);
+  } else if (op === 'unarchive') {
+    await q("UPDATE watch_cves SET status='watching', archived_at=NULL, resolved_at=NULL WHERE cve=$1", [cve]);
+    await q('UPDATE hosts SET needs_match=true WHERE NOT disabled');
+    await opsEvent(`${cve} の監視を再開`);
+  } else {
+    await q('DELETE FROM watch_cves WHERE cve=$1', [cve]);
+    await opsEvent(`${cve} を CVE監視から削除`);
+  }
   revalidatePath('/watch');
 }
 
@@ -420,10 +432,11 @@ export async function watchCve(fd: FormData): Promise<void> {
   await requireUser();
   const cve = String(fd.get('cve') ?? '').trim().toUpperCase();
   if (!/^CVE-\d{4}-\d{4,}$/.test(cve)) return;
-  await q("INSERT INTO watch_cves(cve, note) VALUES ($1, 'CVE照会から追加') ON CONFLICT DO NOTHING", [cve]);
+  await q("INSERT INTO watch_cves(cve, note) VALUES ($1, 'CVE照会から追加') ON CONFLICT (cve) DO UPDATE SET status='watching', archived_at=NULL, resolved_at=NULL", [cve]);
   await q('UPDATE hosts SET needs_match=true WHERE NOT disabled');
   revalidatePath(`/cve/${cve}`);
   revalidatePath('/watch');
+  revalidatePath('/explore');
 }
 
 // Create or update a system record. Manual roots decide how packages are grouped from the next report.

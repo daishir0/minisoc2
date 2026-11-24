@@ -86,7 +86,9 @@ async function pollPullHosts() {
 // Watched CVEs: re-check each against distro/advisory data (fast path, ahead of NVD) and alert the
 // moment a host is confirmed affected — including OS/kernel CVEs that only distro trackers map.
 async function watchCveAlerts() {
-  const cves = await q<{ cve: string }>('SELECT cve FROM watch_cves');
+  // Only actively-watched CVEs incur the per-CVE external lookup. 'resolved' (dealt with) and 'archived'
+  // (retired) ones are skipped, so a watched CVE stops costing HTTP once it is cleared.
+  const cves = await q<{ cve: string }>("SELECT cve FROM watch_cves WHERE status='watching'");
   for (const { cve } of cves) {
     try {
       const v = await lookupCve(cve);
@@ -390,7 +392,7 @@ async function logRetention() {
 // user still hears "the thing you're watching now has a patch". fetchExternal() does not touch cve_lookups,
 // so this background poll never pollutes the /explore recent-lookups list.
 async function watchUpstreamFix() {
-  const watched = await q<{ cve: string }>('SELECT cve FROM watch_cves');
+  const watched = await q<{ cve: string }>("SELECT cve FROM watch_cves WHERE status='watching'");
   for (const { cve } of watched) {
     const open = await q1<{ n: string }>(
       "SELECT count(*) AS n FROM findings f WHERE f.status='open' AND (f.vuln_id=$1 OR EXISTS (SELECT 1 FROM vulns v WHERE v.id=f.vuln_id AND $1 = ANY(v.aliases)))", [cve]);
@@ -410,6 +412,24 @@ async function watchUpstreamFix() {
       });
     }
   }
+}
+
+// Retire / revive watched CVEs automatically. A CVE that was detected on some host and is now cleared
+// everywhere becomes 'resolved' (dropping it from the heavy external-lookup loops); if an open finding for
+// a 'resolved' watch re-appears, it flips back to 'watching'. 'archived' (user-retired) is left untouched.
+// Never-detected watched CVEs stay 'watching' — that is the point of watching them.
+const WATCH_MATCH = (col: string) =>
+  `(f.vuln_id=${col} OR EXISTS (SELECT 1 FROM vulns v WHERE v.id=f.vuln_id AND ${col} = ANY(v.aliases)))`;
+async function watchLifecycle() {
+  await q(
+    `UPDATE watch_cves w SET status='resolved', resolved_at=now()
+     WHERE w.status='watching'
+       AND EXISTS (SELECT 1 FROM findings f WHERE ${WATCH_MATCH('w.cve')})
+       AND NOT EXISTS (SELECT 1 FROM findings f WHERE f.status='open' AND ${WATCH_MATCH('w.cve')})`);
+  await q(
+    `UPDATE watch_cves w SET status='watching', resolved_at=NULL
+     WHERE w.status='resolved'
+       AND EXISTS (SELECT 1 FROM findings f WHERE f.status='open' AND ${WATCH_MATCH('w.cve')})`);
 }
 
 // Disk guard: above the threshold, raw logs are not stored (rules and aggregates keep running).
@@ -561,6 +581,7 @@ async function tick(n: number) {
     ['housekeeping', housekeeping, 360],
     ['logRetention', logRetention, 60],
     ['watchUpstreamFix', watchUpstreamFix, 180],
+    ['watchLifecycle', watchLifecycle, 5],
     ['diskGuard', diskGuard, 10],
     ['logSpikes', logSpikes, 30],
     ['webDaily', webDaily, 30],

@@ -286,7 +286,7 @@ export async function matchHost(hostId: string): Promise<{ open: number; added: 
     if (c.cvss != null) c.severity = fromScore(c.cvss);
   }
   const kev = new Set((await q<{ cve: string }>('SELECT cve FROM kev WHERE cve = ANY($1)', [[...new Set([...cands.values()].map((c) => c.vulnId))]])).map((r) => r.cve));
-  const watch = new Set((await q<{ cve: string }>('SELECT cve FROM watch_cves')).map((r) => r.cve));
+  const watch = new Set((await q<{ cve: string }>("SELECT cve FROM watch_cves WHERE status <> 'archived'")).map((r) => r.cve));
   const existing = new Map(
     (await q<{ id: string; vuln_id: string; ecosystem: string; pkg: string; status: string; kev: boolean; severity: string; systems: string[] }>(
       'SELECT id, vuln_id, ecosystem, pkg, status, kev, severity, systems FROM findings WHERE host_id=$1', [hostId],
