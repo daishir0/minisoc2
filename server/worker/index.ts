@@ -529,10 +529,11 @@ async function webDaily() {
     }
     // Traffic blackout: an established site (7-day avg >= 100 req) served nothing yesterday.
     if (hist >= 3 && Number(r.areq) >= 100 && Number(r.req) === 0) {
+      const avg = Math.round(Number(r.areq));
       await raiseAlert({
         kind: 'log', severity: 'info', hostId: r.host_id,
-        title: `[${r.name}] Web アクセスが途絶：${r.vhost}`,
-        detail: `${y}: 0件（直近7日平均 ${Math.round(Number(r.areq))}件）。移転・停止・DNS変更なら正常。`,
+        title: `[${r.name}] ${r.vhost} のアクセスが ${y} は 0件（平常 約${avg}件/日）`,
+        detail: `${r.vhost}：${y} のアクセスは 0件でした（直近7日の平常は 1日あたり約 ${avg}件）。このサイトを停止・公開終了・移転・DNS変更したのであれば、ログが出ないのは正常です。心当たりがなければサイトがダウンしていないか確認してください。`,
         dedupeKey: `web-gap:${r.host_id}:${r.vhost}:${y}`,
       });
       n++;

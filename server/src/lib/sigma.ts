@@ -196,10 +196,12 @@ export async function getSigmaRules(): Promise<LoadedSigma[]> {
   return rules;
 }
 
-// SigmaHQ linux rules target command/process/system logs. Web access logs are a different animal —
-// a URL that merely contains "curl", "wget", "nmap" etc. is not that program running on the host — and
-// are covered by minisoc2's own web rules. Never test Sigma rules against an access log.
-const ACCESS_SOURCE = /access[_.]log$/;
+// SigmaHQ linux rules target command/process/system logs. Web access logs are a different animal — a URL
+// that merely contains "curl", "wget", "javascript", "nmap" etc. is not that program running on the host —
+// and are covered by minisoc2's own web rules. Never test Sigma rules against an access log. Match anywhere
+// in the source (not just the tail) so rotated/dated/compressed names like `access_log_20261122.gz` are also
+// recognised — same definition as the web log category (CAT.web).
+const ACCESS_SOURCE = /access[_.]log/i;
 
 export function matchSigma(rules: LoadedSigma[], source: string, message: string, ts: Date): Hit[] {
   if (ACCESS_SOURCE.test(source)) return [];
