@@ -99,7 +99,7 @@ export default async function SettingsPage({ searchParams }: { searchParams: Pro
               <label className="flex items-start gap-2 text-sm"><input type="checkbox" name="watchAlwaysImmediate" defaultChecked={p.watchAlwaysImmediate} className="mt-1" /> <span>ウォッチ登録CVEは深刻度に関係なく即時メール<br /><span className="text-xs text-muted">オフ時：「修正版が出た／解消」のときは即時、ただの「検出」は上の即時メール深刻度に従います。</span></span></label>
             </div>
           </div>
-          <Field label="日次まとめメールの時刻（時、サーバー時刻）" hint="前日からの変化を1通にまとめて送ります。変化が無い日は送りません。-1 で停止。"><input name="digestHour" type="number" className="input" defaultValue={p.digestHour ?? 8} /></Field>
+          <Field label="日次まとめメールの時刻（時、サーバー時刻）" hint="全ホストの未対応件数（KEV/緊急/高/新規/監視）を1通にまとめ、毎日この時刻に送ります（0件のホストも表示）。-1 で停止。"><input name="digestHour" type="number" className="input" defaultValue={p.digestHour ?? 8} /></Field>
           <Field label="報告が途絶えたらアラートを出すまでの時間（時間）"><input name="staleHours" type="number" className="input" defaultValue={p.staleHours} /></Field>
           <Field label="全ホストを毎日再照合する時刻（時、サーバー時刻）" hint="ソフトが変わっていなくても、新しく公表されたCVEを拾います。"><input name="fullRematchHour" type="number" className="input" defaultValue={p.fullRematchHour} /></Field>
           <Field label="OSV照合結果のキャッシュ（時間）"><input name="osvCacheHours" type="number" className="input" defaultValue={p.osvCacheHours} /></Field>
