@@ -375,10 +375,11 @@ export async function matchHost(hostId: string): Promise<{ open: number; added: 
   const gone = [...existing.values()].filter((f) => f.status === 'open');
   if (gone.length) {
     await q("UPDATE findings SET status='resolved', resolved_at=now() WHERE id = ANY($1::bigint[])", [gone.map((f) => f.id)]);
-    for (const f of gone) {
-      if (watch.has(f.vuln_id)) {
-        await raiseAlert({ kind: 'watch', severity: 'info', hostId, title: `[${host.name}] 監視中の ${f.vuln_id}（${f.pkg}）が解消されました`, dedupeKey: `watch-fixed:${hostId}:${f.id}:${Date.now()}` });
-      }
+    // A watched CVE clearing is good news, not an alert. Record it once per CVE on the timeline only
+    // (collapsing all affected packages — a kernel CVE spans many) so /alerts stays actionable.
+    const resolvedWatched = [...new Set(gone.filter((f) => watch.has(f.vuln_id)).map((f) => f.vuln_id))];
+    for (const cve of resolvedWatched) {
+      await recordEvent({ hostId, kind: 'vuln_resolved', important: false, title: `${host.name}：監視中の ${cve} が解消されました` });
     }
   }
 
