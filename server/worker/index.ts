@@ -14,6 +14,7 @@ import { fetchExternal, lookupCve } from '../src/lib/cvelookup';
 import { dropOldPartitions, ensurePartition } from '../src/lib/logs';
 import { matchHost } from '../src/lib/match';
 import { enrichLicenses } from '../src/lib/licenses';
+import { analyzeWebDay, renderBreakdown, WEB_CLASS_LABEL, RECON_RE } from '../src/lib/webanalyze';
 import { recordEvent } from '../src/lib/events';
 import { sendDigest } from '../src/lib/digest';
 import { NVD_DELAY_MS, nvdStep } from '../src/lib/nvd';
@@ -476,12 +477,31 @@ async function logSpikes() {
         AND max(n) FILTER (WHERE day = $1::date) >= $3`,
     [y, pol.webSpikeMult, minFloor],
   ).then((rs) => rs.filter((s) => Number(s.n) >= floorFor(s.key)));
+  const reviewed = new Set((await q<{ topic: string }>('SELECT topic FROM log_threat_review')).map((r) => r.topic));
   for (const s of spikes) {
+    const mult = (Number(s.n) / Math.max(1, Number(s.avg))).toFixed(1);
+    // If a log-volume spike is just HTTP access lines full of scanner probes (.env/.git/phpinfo), it is the
+    // same reconnaissance seen on the web side — classify it as 偵察, not a threat (item 5).
+    let recon = false;
+    if (s.key.startsWith('source:')) {
+      const src = s.key.slice('source:'.length);
+      const sample = await q<{ message: string }>(
+        `SELECT message FROM raw_logs WHERE host_id=$1 AND source=$2 AND received_at >= $3::date AND received_at < $3::date + 2 LIMIT 2000`,
+        [s.host_id, src, y]);
+      const http = sample.filter((r) => /"[A-Z]+ \S+ HTTP\//.test(r.message));
+      const rc = http.filter((r) => RECON_RE.test(r.message)).length;
+      if (http.length >= 10 && rc >= 0.3 * http.length) recon = true;
+    }
+    // recon spikes are the downgradeable (benign) ones. Topic = dedupe stem (without date), host-scoped.
+    const stem = `spike:${s.host_id}:${s.key}:recon`;
+    const ack = recon && reviewed.has(stem);
     await raiseAlert({
-      kind: 'log', severity: 'medium', hostId: s.host_id,
-      title: `[${s.name}] ログ量が平常の${(Number(s.n) / Math.max(1, Number(s.avg))).toFixed(1)}倍：${s.key}`,
-      detail: `${y}: ${s.n}件（直近7日平均 ${Math.round(Number(s.avg))}件）`,
-      dedupeKey: `spike:${s.host_id}:${s.key}:${y}`,
+      kind: 'log', severity: ack ? 'info' : recon ? 'info' : 'medium', hostId: s.host_id,
+      title: `[${s.name}] ${recon ? 'ログ量増（偵察・スキャナ由来）' : 'ログ量が平常の' + mult + '倍'}：${s.key}`,
+      detail: [`${y}: ${s.n}件（直近7日平均 ${Math.round(Number(s.avg))}件）`,
+        ...(recon ? ['内容はHTTPアクセスログで、.env/.git/phpinfo 等の探索が大半（同一の偵察が別ソースに記録されたもの）。実害は内訳で確認してください。'] : []),
+        ...(ack ? ['※この種別は「確認済み（benign）」登録済みのため格下げ（日次のみ）。'] : [])].join('\n'),
+      dedupeKey: ack ? `logack:${s.host_id}:${s.key}:recon:${y}` : `spike:${s.host_id}:${s.key}${recon ? ':recon' : ''}:${y}`,
     });
   }
   await setSetting('last_spike_check', { day: y });
@@ -518,24 +538,46 @@ async function webDaily() {
     [y, ignore],
   );
   const mult = pol.webSpikeMult;
+  // Benign-confirmed topics (item 7): recurring reviewed spikes are downgraded to digest-only.
+  const reviewed = new Set((await q<{ topic: string }>('SELECT topic FROM log_threat_review')).map((r) => r.topic));
+  // One raw-log analysis per host (shared across its vhosts), lazily.
+  const analysisByHost = new Map<string, Map<string, import('../src/lib/webanalyze').WebDayAnalysis>>();
+  const sev: Record<string, 'info' | 'low' | 'medium' | 'high'> = { breach: 'high', auth: 'medium', traffic: 'medium', 'app-errors': 'low', recon: 'info' };
   let n = 0;
   for (const r of rows) {
     const hist = Number(r.hist);
-    const metrics: [string, number, number, number][] = [
-      ['リクエスト', Number(r.req), Number(r.areq) || 0, pol.webReqFloor],
-      ['4xx', Number(r.c4), Number(r.a4) || 0, pol.web4xxFloor],
-      ['5xx', Number(r.c5), Number(r.a5) || 0, pol.web5xxFloor],
-    ];
-    for (const [label, today, avg, floor] of metrics) {
-      if (hist >= 3 && today >= floor && today >= mult * Math.max(avg, 1)) {
-        await raiseAlert({
-          kind: 'log', severity: 'medium', hostId: r.host_id,
-          title: `[${r.name}] Web ${label}が平常の${(today / Math.max(avg, 1)).toFixed(1)}倍：${r.vhost}`,
-          detail: `${y}: ${today}件（直近7日平均 ${Math.round(avg)}件）`,
-          dedupeKey: `web:${r.host_id}:${r.vhost}:${label}:${y}`,
-        });
-        n++;
-      }
+    // Correlate the req / 4xx / 5xx spikes of one vhost+day into a SINGLE event (item 1).
+    const spikes: string[] = [];
+    const req = Number(r.req), areq = Number(r.areq) || 0;
+    const c4 = Number(r.c4), a4 = Number(r.a4) || 0;
+    const c5 = Number(r.c5), a5 = Number(r.a5) || 0;
+    if (hist >= 3 && req >= pol.webReqFloor && req >= mult * Math.max(areq, 1)) spikes.push(`リクエスト ${(req / Math.max(areq, 1)).toFixed(1)}倍(${req}件/平常${Math.round(areq)})`);
+    if (hist >= 3 && c4 >= pol.web4xxFloor && c4 >= mult * Math.max(a4, 1)) spikes.push(`4xx ${(c4 / Math.max(a4, 1)).toFixed(1)}倍(${c4}件/平常${Math.round(a4)})`);
+    if (hist >= 3 && c5 >= pol.web5xxFloor && c5 >= mult * Math.max(a5, 1)) spikes.push(`5xx ${(c5 / Math.max(a5, 1)).toFixed(1)}倍(${c5}件/平常${Math.round(a5)})`);
+    if (spikes.length) {
+      if (!analysisByHost.has(r.host_id)) analysisByHost.set(r.host_id, await analyzeWebDay(r.host_id, y).catch(() => new Map()));
+      const a = analysisByHost.get(r.host_id)!.get(r.vhost);
+      // classify: prefer the raw-log breakdown; fall back to counts when raw logs are unavailable.
+      const cls = a?.cls ?? (c5 > 0 ? 'traffic' : c4 >= 0.5 * Math.max(req, 1) ? 'app-errors' : 'traffic');
+      const label = WEB_CLASS_LABEL[cls];
+      const base = sev[cls] ?? 'medium';
+      // 5xx always matters; breach already high.
+      const severity = c5 >= pol.web5xxFloor && base === 'info' ? 'low' : base;
+      // Topic = the alert's dedupe stem without the date (host-scoped), so a benign review downgrades every
+      // future recurrence of the SAME vhost+class. recon / app-errors are the downgradeable (benign) classes.
+      const stem = `web:${r.host_id}:${r.vhost}:${cls}`;
+      const isBenignCls = cls === 'recon' || cls === 'app-errors';
+      const ack = isBenignCls && reviewed.has(stem);
+      const detailLines = [`${y}：${spikes.join(' / ')}`, ...(a ? renderBreakdown(a) : ['（生ログ未保持のため内訳なし）']), '', `▶ 生ログ: ${PUBLIC_URL.replace(/\/+$/, '')}/logs?host=${r.host_id}&vhost=${encodeURIComponent(r.vhost)}&day=${y}`];
+      if (ack) detailLines.push('※この種別は「確認済み（benign）」登録済みのため格下げ（日次のみ）。');
+      await raiseAlert({
+        kind: 'log', severity: ack ? 'info' : severity, hostId: r.host_id,
+        title: `[${r.name}] Web異常（${label}）：${r.vhost}`,
+        detail: detailLines.join('\n'),
+        // logack:* is digest-only (immediate() skips it, like web-gap). Otherwise one event per vhost+day.
+        dedupeKey: ack ? `logack:${r.host_id}:${r.vhost}:${cls}:${y}` : `${stem}:${y}`,
+      });
+      n++;
     }
     // Traffic blackout: an established site (7-day avg >= 100 req) served nothing yesterday.
     if (hist >= 3 && Number(r.areq) >= 100 && Number(r.req) === 0) {

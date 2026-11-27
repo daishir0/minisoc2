@@ -15,7 +15,7 @@ export function logThreatPrompt(
   const n = threats.length;
   const items = threats.flatMap((t, i) => [
     `${i + 1}. ${t.title}`,
-    ...(t.detail ? ['   記録サンプル:', '   ```', ...t.detail.slice(0, 400).split('\n').map((l) => '   ' + l), '   ```'] : []),
+    ...(t.detail ? ['   記録サンプル（minisoc2の事前分析＝上位IP・ステータス内訳・探索検出）:', '   ```', ...t.detail.slice(0, 900).split('\n').map((l) => '   ' + l), '   ```'] : []),
   ]);
   const lines = [
     `あなたはホスト「${host.host}」上で動作している Claude Code です。以下のログ脅威${n}件を、変更を一切加えずに（READ-ONLY）調査し、それぞれ脅威かどうかを判定してください。`,

@@ -17,15 +17,18 @@ export interface ThreatRow {
   detail: string | null;
   agoText: string;
   ip: string | null;
+  topic: string;              // dedupe stem (no date) — the benign-review key
+  benignReviewable: boolean;  // show the "benign (downgrade future)" action
 }
 
 // Mirrors the vulnerability page's RemediationPicker: tick the threats you want, get ONE copy-paste
 // Claude Code investigation prompt. Because the prompt opens with a host-guard (hostname must match),
 // one prompt == one host: selections spanning hosts produce one prompt per host (never mixed).
-export function LogThreatPicker({ threats, ackAction, trustAction }: {
+export function LogThreatPicker({ threats, ackAction, trustAction, benignAction }: {
   threats: ThreatRow[];
   ackAction: (fd: FormData) => void | Promise<void>;
   trustAction: (fd: FormData) => void | Promise<void>;
+  benignAction: (fd: FormData) => void | Promise<void>;
 }) {
   const [sel, setSel] = useState<Set<string>>(() => new Set(threats.map((t) => t.id)));
   const [show, setShow] = useState(false);
@@ -81,6 +84,14 @@ export function LogThreatPicker({ threats, ackAction, trustAction }: {
                 {t.ip && <form action={trustAction}><input type="hidden" name="id" value={t.id} /><input type="hidden" name="ip" value={t.ip} /><button className="btn-ghost">自分です（<Masked kind="addr">{t.ip}</Masked>）</button></form>}
                 {t.hostId && <DrillLink patch={drillPatch} className="btn-ghost">調べる</DrillLink>}
                 <form action={ackAction}><input type="hidden" name="id" value={t.id} /><button name="status" value="ack" className="btn-ghost">確認済み</button></form>
+                {t.benignReviewable && t.hostId && (
+                  <form action={benignAction}>
+                    <input type="hidden" name="id" value={t.id} />
+                    <input type="hidden" name="hostId" value={t.hostId} />
+                    <input type="hidden" name="topic" value={t.topic} />
+                    <button className="btn-ghost" title="この種別の再発を今後は日次まとめのみに格下げ（偵察ノイズの抑制）">今後は確認不要（benign）</button>
+                  </form>
+                )}
               </div>
             </li>
           );

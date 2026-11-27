@@ -284,6 +284,35 @@ export async function ackAllOpen(): Promise<void> {
   revalidatePath('/alerts');
 }
 
+// Log-threat "benign confirmed" (the log equivalent of a finding VEX): record that this threat topic on
+// this host is benign, so the daily job downgrades every future recurrence to digest-only. topic is the
+// alert's dedupe stem without the trailing date (e.g. web:<hostid>:<vhost>:recon).
+export async function reviewLogThreatBenign(fd: FormData): Promise<void> {
+  await requireUser();
+  const id = String(fd.get('id') ?? '');
+  const hostId = String(fd.get('hostId') ?? '');
+  const topic = String(fd.get('topic') ?? '').slice(0, 300);
+  const note = String(fd.get('note') ?? '').slice(0, 500);
+  if (!/^[0-9a-f-]{36}$/.test(hostId) || !topic) return;
+  await q(
+    `INSERT INTO log_threat_review(host_id, topic, note) VALUES ($1,$2,$3)
+     ON CONFLICT (host_id, topic) DO UPDATE SET note=EXCLUDED.note, reviewed_at=now()`,
+    [hostId, topic, note],
+  );
+  if (id) await setAlertStatus([id], 'ack'); // close the current instance
+  revalidatePath('/logs');
+}
+
+// Undo a benign review (re-arm full alerting for the topic).
+export async function unreviewLogThreat(fd: FormData): Promise<void> {
+  await requireUser();
+  const hostId = String(fd.get('hostId') ?? '');
+  const topic = String(fd.get('topic') ?? '');
+  if (!/^[0-9a-f-]{36}$/.test(hostId) || !topic) return;
+  await q('DELETE FROM log_threat_review WHERE host_id=$1 AND topic=$2', [hostId, topic]);
+  revalidatePath('/logs');
+}
+
 // VEX-style suppression: the finding stays recorded with a justification.
 export async function suppressFinding(fd: FormData): Promise<void> {
   await requireUser();

@@ -46,10 +46,10 @@ async function vulnEpss(dedupeKey: string): Promise<number | null> {
 }
 
 async function immediate(a: { kind: string; severity: string; dedupe_key: string }, policy: PolicySettings): Promise<boolean> {
-  // Traffic blackout (an established site served 0 requests): an availability/silence signal, not an
-  // intrusion. It stays an open alert (counted in the daily digest and on the host page) but never fires
-  // an immediate "threat detected" mail — the quiet, low-urgency case belongs in the daily summary.
-  if (a.dedupe_key.startsWith('web-gap:')) return false;
+  // Traffic blackout (web-gap) and benign-confirmed recurring web spikes (web-ack) are quiet, low-urgency
+  // signals: they stay open alerts (counted in the daily digest and on the host page) but never fire an
+  // immediate "threat detected" mail — they belong in the daily summary, not the inbox.
+  if (a.dedupe_key.startsWith('web-gap:') || a.dedupe_key.startsWith('logack:')) return false;
   if (a.kind === 'vuln') { const e = await vulnEpss(a.dedupe_key); return (e != null && e >= ACT_EPSS) || atLeast(a.severity, policy.mailLevel); }
   if (a.kind === 'watch') {
     if (policy.watchAlwaysImmediate) return true;
@@ -75,7 +75,7 @@ const cveOf = (t: string) => (t.match(/CVE-\d{4}-\d+/) ?? ['CVE不明'])[0];
 function urgentWording(host: string, kind: string): { reason: string; sentence: string; actsOnHost: boolean } {
   switch (kind) {
     case 'state': return { reason: `${host} で侵入の兆候を検出`, sentence: `${host} でホスト状態の重大な変化（侵入の兆候）を検出しました。`, actsOnHost: true };
-    case 'log': return { reason: `${host} で侵入の兆候を検出`, sentence: `${host} でログ上の脅威（侵入の兆候）を検出しました。`, actsOnHost: true };
+    case 'log': return { reason: `${host} でログ異常を検出`, sentence: `${host} でログ上に通常と異なる変化を検出しました（内容は下記のとおり。偵察・アプリ起因・実攻撃かは内訳をご確認ください）。`, actsOnHost: true };
     case 'stale': return { reason: `${host} からの報告が停止`, sentence: `${host} からの定期報告が途絶えています。`, actsOnHost: true };
     case 'disk': return { reason: `${host} でディスク逼迫`, sentence: `${host} のディスク使用率が上限を超えました（生ログの保存を停止している可能性）。`, actsOnHost: true };
     case 'agent': return { reason: `${host} でエージェントの異常`, sentence: `${host} のエージェントに異常が発生しました。`, actsOnHost: true };

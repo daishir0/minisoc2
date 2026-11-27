@@ -115,7 +115,7 @@ export async function ingestLogs(host: HostRow, batch: LogBatch): Promise<{ line
 // Parse access-log lines and upsert the per-vhost and per-IP daily web aggregates. No-op for hosts that
 // ship no access log (the maps stay empty), so non-web hosts never get web_daily rows.
 async function ingestWeb(hostId: string, entries: { s: string; m: string }[]): Promise<void> {
-  type W = { day: string; vhost: string; req: number; c3: number; c4: number; c5: number; bytes: number };
+  type W = { day: string; vhost: string; req: number; c3: number; c4: number; c5: number; c401: number; c403: number; c404: number; bytes: number };
   type I = { day: string; vhost: string; ip: string; req: number; bytes: number };
   const web = new Map<string, W>();
   const byIp = new Map<string, I>();
@@ -131,9 +131,11 @@ async function ingestWeb(hostId: string, entries: { s: string; m: string }[]): P
     const status = Number(st);
     const nb = bytes === '-' ? 0 : Number(bytes) || 0;
     const wk = `${day}\u0000${vhost}`;
-    const w = web.get(wk) ?? { day, vhost, req: 0, c3: 0, c4: 0, c5: 0, bytes: 0 };
+    const w = web.get(wk) ?? { day, vhost, req: 0, c3: 0, c4: 0, c5: 0, c401: 0, c403: 0, c404: 0, bytes: 0 };
     w.req++; w.bytes += nb;
-    if (status >= 300 && status < 400) w.c3++; else if (status >= 400 && status < 500) w.c4++; else if (status >= 500) w.c5++;
+    if (status >= 300 && status < 400) w.c3++;
+    else if (status >= 400 && status < 500) { w.c4++; if (status === 401) w.c401++; else if (status === 403) w.c403++; else if (status === 404) w.c404++; }
+    else if (status >= 500) w.c5++;
     web.set(wk, w);
     const ik = `${wk}\u0000${ip}`;
     const iv = byIp.get(ik) ?? { day, vhost, ip: ip.slice(0, 100), req: 0, bytes: 0 };
@@ -143,10 +145,10 @@ async function ingestWeb(hostId: string, entries: { s: string; m: string }[]): P
   if (web.size) {
     const r = [...web.values()];
     await q(
-      `INSERT INTO web_daily(host_id, day, vhost, req, c3xx, c4xx, c5xx, bytes)
-       SELECT $1, d, v, rq, e, f, g, b FROM unnest($2::date[], $3::text[], $4::bigint[], $5::bigint[], $6::bigint[], $7::bigint[], $8::bigint[]) AS x(d, v, rq, e, f, g, b)
-       ON CONFLICT (host_id, day, vhost) DO UPDATE SET req=web_daily.req+EXCLUDED.req, c3xx=web_daily.c3xx+EXCLUDED.c3xx, c4xx=web_daily.c4xx+EXCLUDED.c4xx, c5xx=web_daily.c5xx+EXCLUDED.c5xx, bytes=web_daily.bytes+EXCLUDED.bytes`,
-      [hostId, r.map((x) => x.day), r.map((x) => x.vhost), r.map((x) => x.req), r.map((x) => x.c3), r.map((x) => x.c4), r.map((x) => x.c5), r.map((x) => x.bytes)],
+      `INSERT INTO web_daily(host_id, day, vhost, req, c3xx, c4xx, c5xx, c401, c403, c404, bytes)
+       SELECT $1, d, v, rq, e, f, g, i, j, k, b FROM unnest($2::date[], $3::text[], $4::bigint[], $5::bigint[], $6::bigint[], $7::bigint[], $8::bigint[], $9::bigint[], $10::bigint[], $11::bigint[], $12::bigint[]) AS x(d, v, rq, e, f, g, i, j, k, b)
+       ON CONFLICT (host_id, day, vhost) DO UPDATE SET req=web_daily.req+EXCLUDED.req, c3xx=web_daily.c3xx+EXCLUDED.c3xx, c4xx=web_daily.c4xx+EXCLUDED.c4xx, c5xx=web_daily.c5xx+EXCLUDED.c5xx, c401=web_daily.c401+EXCLUDED.c401, c403=web_daily.c403+EXCLUDED.c403, c404=web_daily.c404+EXCLUDED.c404, bytes=web_daily.bytes+EXCLUDED.bytes`,
+      [hostId, r.map((x) => x.day), r.map((x) => x.vhost), r.map((x) => x.req), r.map((x) => x.c3), r.map((x) => x.c4), r.map((x) => x.c5), r.map((x) => x.c401), r.map((x) => x.c403), r.map((x) => x.c404), r.map((x) => x.bytes)],
     );
   }
   if (byIp.size) {
