@@ -3,7 +3,7 @@
 // log_rule_daily) and returns a sparse (dimValue × day → value) matrix the client pivots into any chart.
 // Everything is whitelisted; filter values are parameterised.
 import { q } from './db';
-import type { MeasureKey, DimKey } from './logexplore';
+import { RAW_DIMS, type MeasureKey, type DimKey } from './logexplore';
 
 interface MDef { table: string; val: string; fixed?: string }
 const M: Record<MeasureKey, MDef> = {
@@ -40,9 +40,54 @@ function dimExpr(table: string, dim: DimKey): string | null {
 export interface AggParams { measure: MeasureKey; dim: DimKey; days: number; filters: Record<string, string | undefined> }
 export interface AggResult { days: string[]; rows: { k: string; d: string; v: number }[] }
 
+// Raw dimensions (path / ua / msg) are extracted on demand from raw_logs.message, since the daily
+// rollups do not carry them. Bounded by the raw-log retention window (so the series is shorter than the
+// rollup-backed measures). Only total mode; anomaly ranking falls back to empty for these dims.
+const rawDimExpr: Record<'path' | 'ua' | 'msg', string> = {
+  // request-line path without method or query string: `"GET /a/b?x=1 HTTP/1.1"` -> `/a/b`
+  path: `substring(t.message from '"[A-Z]+ ([^ ?"]+)')`,
+  // combined-log User-Agent is the last quoted field
+  ua: `substring(t.message from '"([^"]*)"[[:space:]]*$')`,
+  // normalise a journal/syslog line to a repeatable shape: drop a leading "Mon DD HH:MM:SS host proc[pid]:"
+  // prefix, then collapse uuids and numbers, and cap length
+  msg: `left(regexp_replace(regexp_replace(regexp_replace(t.message,
+      '^[[:alpha:]]{3}[[:space:]]+[0-9]+[[:space:]]+[0-9:]+[[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+?:[[:space:]]*', ''),
+      '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', '<uuid>', 'gi'),
+      '[0-9]+', 'N', 'g'), 160)`,
+};
+
+async function aggregateRaw(p: AggParams, days: string[]): Promise<AggResult> {
+  const dim = p.dim as 'path' | 'ua' | 'msg';
+  const dexpr = rawDimExpr[dim];
+  const f = p.filters;
+  const params: unknown[] = [];
+  const where: string[] = [`t.received_at > now() - interval '${p.days + 1} days'`];
+  if (f.host && /^[0-9a-f-]{36}$/.test(f.host)) { params.push(f.host); where.push(`t.host_id=$${params.length}`); }
+  if (f.day && /^\d{4}-\d{2}-\d{2}$/.test(f.day)) { params.push(f.day); where.push(`coalesce(t.ts, t.received_at)::date=$${params.length}::date`); }
+  if (f.source) { params.push(f.source); where.push(`t.source=$${params.length}`); }
+  else if (dim === 'msg') where.push(`t.source !~* 'access[_.]log'`);
+  else where.push(`t.source ~* 'access[_.]log'`); // path / ua are web-only
+  if (f.ip && /^[0-9a-f:.]{3,45}$/i.test(f.ip)) { params.push('%' + f.ip + '%'); where.push(`t.message LIKE $${params.length}`); }
+  if (f.path && /^[\w/.~:%@+-]{1,300}$/.test(f.path)) { params.push(f.path); where.push(`${rawDimExpr.path}=$${params.length}`); }
+  // status: exact "200" or a class "4xx"; the response status is the number after the quoted request
+  const statusExpr = `substring(t.message from '" ([0-9]{3}) ')`;
+  if (f.status && /^[0-9]{3}$/.test(f.status)) { params.push(f.status); where.push(`${statusExpr}=$${params.length}`); }
+  else if (f.status && /^[1-5]xx$/.test(f.status)) where.push(`${statusExpr} LIKE '${f.status[0]}%'`);
+  // measures s4/s5 restrict to their status class even without an explicit status filter
+  if (p.measure === 's4') where.push(`${statusExpr} LIKE '4%'`);
+  else if (p.measure === 's5') where.push(`${statusExpr} LIKE '5%'`);
+
+  const rows = await q<{ k: string | null; d: string; v: string }>(
+    `SELECT ${dexpr} AS k, to_char(coalesce(t.ts, t.received_at),'YYYY-MM-DD') AS d, count(*)::text AS v
+     FROM raw_logs t WHERE ${where.join(' AND ')} AND ${dexpr} IS NOT NULL AND ${dexpr} <> ''
+     GROUP BY k, d`, params);
+  return { days, rows: rows.map((r) => ({ k: r.k ?? '(なし)', d: r.d, v: Number(r.v) })) };
+}
+
 export async function aggregate(p: AggParams): Promise<AggResult> {
   const m = M[p.measure];
   const days = Array.from({ length: p.days }, (_, i) => new Date(Date.now() - (p.days - 1 - i) * 86400_000).toISOString().slice(0, 10));
+  if (RAW_DIMS.includes(p.dim)) return aggregateRaw(p, days);
   if (!m) return { days, rows: [] };
   const params: unknown[] = [];
   const where: string[] = [`t.day > current_date - ${p.days}`];

@@ -6,7 +6,9 @@ import { useMask } from '@/components/Mask';
 import { pseudo } from '@/lib/mask';
 import { CAT_LABEL } from '@/lib/logcat';
 import { applyLogFilter, readLogFilter, type LogFilter } from '@/lib/logfilter';
-import { MEASURES, DIM_LABEL, CHARTS, DEV_CHARTS, PRESETS, AGG_FILTER_KEYS, type MeasureKey, type DimKey, type ChartKey, type ModeKey } from '@/lib/logexplore';
+import { MEASURES, DIM_LABEL, CHARTS, DEV_CHARTS, PRESETS, ANGLES, AGG_FILTER_KEYS, RAW_DIMS, type MeasureKey, type DimKey, type ChartKey, type ModeKey, type Angle } from '@/lib/logexplore';
+
+const WEB_MEASURES = new Set<MeasureKey>(['web', 's4', 's5', 'bytes', 'ips', 'ipreq']);
 
 interface AggRow { k: string; d: string; v: number }
 interface AggResp { days: string[]; rows: AggRow[] }
@@ -62,11 +64,16 @@ export function LogExplorer({ hosts, ruleTitles }: { hosts: Record<string, strin
 
   useEffect(() => {
     if (!md.dims.includes(dim)) setDim(md.dims[0]);
-    setFilters((prev) => { const keep: Record<string, string> = {}; for (const k of ['host', 'day']) if (prev[k]) keep[k] = prev[k]; return keep; });
+    // Keep the current filter context across measure changes (so the 観点 switcher can flip measure/dim
+    // while staying on the same host/day/source you are investigating). aggregate() only honours the
+    // filters that apply to the chosen measure's table and ignores the rest.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [measure]);
   useEffect(() => { if (!chartOptions.some(([k]) => k === chart)) setChart(isDev ? 'bar' : 'stack'); // eslint-disable-line react-hooks/exhaustive-deps
   }, [mode]);
+  // path / ua / msg are raw-log dimensions: only total mode is supported (no anomaly ranking).
+  useEffect(() => { if (RAW_DIMS.includes(dim) && mode !== 'total') setMode('total'); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [dim]);
 
   useEffect(() => {
     const id = ++reqId.current; setLoading(true);
@@ -84,6 +91,7 @@ export function LogExplorer({ hosts, ruleTitles }: { hosts: Record<string, strin
     if (dim === 'ip') return masked ? pseudo('addr', k) : k;
     if (dim === 'cat') return CAT_LABEL[k] ?? k;
     if (dim === 'rule') return ruleTitles[k] ?? k;
+    if (dim === 'msg') return k.length > 80 ? k.slice(0, 80) + '…' : k;
     return k;
   };
   const md2 = (d: string) => { const p = d.split('-'); return `${Number(p[1])}/${Number(p[2])}`; };
@@ -103,8 +111,23 @@ export function LogExplorer({ hosts, ruleTitles }: { hosts: Record<string, strin
     const rawPatch: LogFilter = { ...aggPatch };
     if (isStatus) rawPatch.status = rawK;
     if (dim === 'ip') { delete (rawPatch as Record<string, string>).ip; rawPatch.q = rawK; } // raw logs search the IP in the message text
+    if (dim === 'path') { delete (rawPatch as Record<string, string>).path; rawPatch.q = rawK; } // raw logs: search the path text
+    if (dim === 'ua') { rawPatch.q = rawK; } // raw logs: search the UA text
     applyLogFilter(rawPatch, { scroll: true });
   }
+
+  // 観点スイッチャー: change the view (measure/dim/chart/status) but keep the host/day/source/vhost/ip
+  // context you are investigating. (The measure-change effect no longer resets filters, so this sticks.)
+  const applyAngle = (a: Angle) => {
+    setMeasure(a.measure); setDim(a.dim); setChart(a.chart); setMode(a.mode);
+    setFilters((prev) => {
+      const keep: Record<string, string> = {};
+      for (const k of ['host', 'day', 'source', 'vhost', 'ip']) if (prev[k]) keep[k] = prev[k];
+      if (a.status) keep.status = a.status;
+      return keep;
+    });
+  };
+  const applyPreset = (p: typeof PRESETS[number]) => { setMeasure(p.measure); setDim(p.dim); setChart(p.chart); setMode(p.mode); setFilters(p.filters ?? {}); };
 
   function onChartClick(p: { seriesIndex?: number; dataIndex?: number; name?: string; value?: unknown }) {
     const ka = keyArrays.current;
@@ -186,6 +209,7 @@ export function LogExplorer({ hosts, ruleTitles }: { hosts: Record<string, strin
   const totalRows = (() => { const t = new Map<string, number>(); for (const r of data.rows) t.set(r.k, (t.get(r.k) ?? 0) + r.v); return [...t.entries()].sort((a, b) => b[1] - a[1]).slice(0, 40); })();
   const grand = totalRows.reduce((a, e) => a + e[1], 0) || 1;
   const baseLbl = mode === 'ratio' ? '平常(7日平均)' : '前週';
+  const angleScope: 'web' | 'journal' = (WEB_MEASURES.has(measure) || filters.cat === 'web' || /access[_.]log/i.test(filters.source ?? '')) ? 'web' : 'journal';
 
   const condKeys = Object.keys(filters).filter((k) => filters[k]);
   const removeFilter = (k: string) => { setFilters((prev) => { const n = { ...prev }; delete n[k]; return n; }); applyLogFilter({ [k === 'ip' ? 'q' : k]: '' } as LogFilter, { scroll: false }); };
@@ -197,9 +221,22 @@ export function LogExplorer({ hosts, ruleTitles }: { hosts: Record<string, strin
     <div>
       <div className="mb-3 flex flex-wrap gap-1.5">
         {PRESETS.map((p) => (
-          <button key={p.label} type="button" onClick={() => { setMeasure(p.measure); setDim(p.dim); setChart(p.chart); setMode(p.mode); setFilters(p.filters ?? {}); }}
+          <button key={p.label} type="button" onClick={() => applyPreset(p)}
             className="rounded-full border border-line bg-bg px-2.5 py-1 text-xs hover:border-accent">{p.label}</button>
         ))}
+      </div>
+
+      {/* 観点スイッチャー: flip the view while keeping the host/day/source context (for drilling one anomaly). */}
+      <div className="mb-3 flex flex-wrap items-center gap-1.5 rounded-lg border border-line bg-bg px-2 py-1.5">
+        <span className="mr-1 text-[11px] text-muted">観点（文脈を保って切替）:</span>
+        {ANGLES.filter((a) => a.scope === angleScope).map((a) => {
+          const active = measure === a.measure && dim === a.dim && (a.status ?? '') === (filters.status ?? '');
+          return (
+            <button key={a.key} type="button" onClick={() => applyAngle(a)} aria-pressed={active}
+              className={`rounded-md border px-2 py-1 text-xs ${active ? 'border-accent bg-accent text-white dark:text-black' : 'border-line bg-bg hover:border-accent'}`}>{a.label}</button>
+          );
+        })}
+        <span className="ml-auto text-[11px] text-muted">{angleScope === 'web' ? 'Web' : 'journal/sys'} 文脈</span>
       </div>
 
       <div className="mb-3 flex flex-wrap items-end gap-2 text-sm">
@@ -227,6 +264,16 @@ export function LogExplorer({ hosts, ruleTitles }: { hosts: Record<string, strin
           </>
         )}
       </div>
+
+      {/* 既知性(観点6): look the selected IP up in external reputation DBs. Links only — nothing is sent
+          server-side; hidden while masked so a demo never leaks a real address. */}
+      {filters.ip && !masked && (
+        <div className="mb-2 text-xs text-muted">🔎 IPを外部で調査：
+          <a href={`https://www.abuseipdb.com/check/${encodeURIComponent(filters.ip)}`} target="_blank" rel="noreferrer noopener" className="ml-1 text-accent hover:underline">AbuseIPDB</a>
+          <a href={`https://www.shodan.io/host/${encodeURIComponent(filters.ip)}`} target="_blank" rel="noreferrer noopener" className="ml-2 text-accent hover:underline">Shodan</a>
+          <a href={`https://www.virustotal.com/gui/ip-address/${encodeURIComponent(filters.ip)}`} target="_blank" rel="noreferrer noopener" className="ml-2 text-accent hover:underline">VirusTotal</a>
+        </div>
+      )}
 
       {isDev && chart === 'table' && (
         <div className="max-h-[360px] overflow-auto">
