@@ -13,6 +13,7 @@ import { pollPull } from '../src/lib/pullssh';
 import { fetchExternal, lookupCve } from '../src/lib/cvelookup';
 import { dropOldPartitions, ensurePartition } from '../src/lib/logs';
 import { matchHost } from '../src/lib/match';
+import { enrichLicenses } from '../src/lib/licenses';
 import { recordEvent } from '../src/lib/events';
 import { sendDigest } from '../src/lib/digest';
 import { NVD_DELAY_MS, nvdStep } from '../src/lib/nvd';
@@ -641,6 +642,18 @@ async function main() {
       try { await watchCveAlerts(); } catch (e) { log(`watchCveAlerts failed: ${errMsg(e)}`); }
       try { await syncEpss(); } catch (e) { log(`syncEpss failed: ${errMsg(e)}`); }
       for (let i = 0; i < 1800 && !stopping; i++) await new Promise((r) => setTimeout(r, 1000));
+    }
+  })();
+  // Component license enrichment (deps.dev / Packagist): its own loop so the slow vendor-tracker jobs
+  // above can never starve it. Backfills missing licenses in bounded batches until caught up.
+  void (async () => {
+    while (!stopping) {
+      let fetched = 0;
+      try { const r = await enrichLicenses(); fetched = r.fetched; if (fetched) log(`enrichLicenses: fetched=${fetched}`); }
+      catch (e) { log(`enrichLicenses failed: ${errMsg(e)}`); }
+      // While still backfilling, loop quickly; once caught up, idle 30 min.
+      const wait = fetched > 0 ? 30 : 1800;
+      for (let i = 0; i < wait && !stopping; i++) await new Promise((r) => setTimeout(r, 1000));
     }
   })();
   while (!stopping) {

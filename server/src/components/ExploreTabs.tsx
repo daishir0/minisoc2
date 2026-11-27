@@ -12,6 +12,7 @@ export async function ExploreTabs() {
       { href: '/logs', label: 'ログ', badge: c.logThreat, tone: 'amber' },
       { href: '/integrity', label: 'ファイル改ざん', badge: c.fileChange, tone: 'red' },
       { href: '/alerts', label: 'アラート', badge: c.detectAlerts, tone: 'red' },
+      { href: '/licenses', label: 'ライセンス' },
       { href: '/changes', label: '変化の履歴' },
       { href: '/explore', label: 'CVE照会' },
     ]} />

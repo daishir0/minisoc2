@@ -46,6 +46,10 @@ async function vulnEpss(dedupeKey: string): Promise<number | null> {
 }
 
 async function immediate(a: { kind: string; severity: string; dedupe_key: string }, policy: PolicySettings): Promise<boolean> {
+  // Traffic blackout (an established site served 0 requests): an availability/silence signal, not an
+  // intrusion. It stays an open alert (counted in the daily digest and on the host page) but never fires
+  // an immediate "threat detected" mail — the quiet, low-urgency case belongs in the daily summary.
+  if (a.dedupe_key.startsWith('web-gap:')) return false;
   if (a.kind === 'vuln') { const e = await vulnEpss(a.dedupe_key); return (e != null && e >= ACT_EPSS) || atLeast(a.severity, policy.mailLevel); }
   if (a.kind === 'watch') {
     if (policy.watchAlwaysImmediate) return true;

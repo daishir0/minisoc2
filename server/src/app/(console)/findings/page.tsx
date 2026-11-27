@@ -5,8 +5,7 @@ import { Card, Kev, SEV_LABEL, Sev, ago, vulnLink } from '@/components/ui';
 import { q } from '@/lib/db';
 import { VEX_JUSTIFICATIONS, VEX_LABEL } from '@/lib/vex';
 import { riskBucket, BUCKET_LABEL, type Bucket } from '@/lib/risk';
-import { getPolicy } from '@/lib/settings';
-import { sevInSql } from '@/lib/severity';
+import { buildFindingsWhere } from '@/lib/findingsQuery';
 import { suppressFinding } from '../actions';
 
 const BKT_CLS: Record<Bucket, string> = {
@@ -26,24 +25,10 @@ const SEV_VALUES = ['critical', 'high', 'medium', 'low', 'unknown'];
 
 export default async function FindingsPage({ searchParams }: { searchParams: Promise<Record<string, string | undefined>> }) {
   const sp = await searchParams;
-  const status = ['open', 'suppressed', 'resolved'].includes(sp.status ?? '') ? sp.status! : 'open';
-  const where = ['f.status=$1'];
-  const params: unknown[] = [status];
-  // The severity dropdown carries the active view so it can never disagree with the results:
-  //   __act__ (default) = KEV・緊急 only, __all__ = every severity, or a specific severity.
-  // all=1 (used by e-mail / cross-page links) is still honoured as "show everything".
-  const sevParam = SEV_VALUES.includes(sp.severity ?? '') ? sp.severity! : '';
-  const showAll = sp.all === '1' || sp.severity === '__all__' || !!sevParam;
-  const screenLevel = (await getPolicy()).screenLevel;
-  if (sevParam) { params.push(sevParam); where.push(`f.severity=$${params.length}`); }
-  else if (!showAll && sp.kev !== '1') where.push(`(f.kev OR f.severity IN (${sevInSql(screenLevel)}))`);
-  if (sp.host && /^[0-9a-f-]{36}$/.test(sp.host)) { params.push(sp.host); where.push(`f.host_id=$${params.length}`); }
-  if (sp.kev === '1') where.push('f.kev');
-  if (sp.source) { params.push(sp.source); where.push(`f.source=$${params.length}`); }
-  if (sp.system) { params.push(sp.system); where.push(`$${params.length} = ANY(f.systems)`); }
-  if (sp.q) { params.push(`%${sp.q}%`); where.push(`(f.vuln_id ILIKE $${params.length} OR f.pkg ILIKE $${params.length})`); }
+  // Filters (status / severity view / host / KEV / source / system / q) shared with the CSV export.
+  const { status, whereSql, params, showAll, sevParam, screenLevel } = await buildFindingsWhere(sp);
   const page = Math.max(0, Number(sp.page ?? 0) || 0);
-  const total = Number((await q<{ n: string }>(`SELECT count(*) AS n FROM findings f WHERE ${where.join(' AND ')}`, params))[0].n);
+  const total = Number((await q<{ n: string }>(`SELECT count(*) AS n FROM findings f WHERE ${whereSql}`, params))[0].n);
   const rows = await q<{
     id: string; host_id: string; host: string; vuln_id: string; ecosystem: string; pkg: string; version: string; fixed: string;
     severity: string; kev: boolean; source: string; first_seen: Date; summary: string | null; suppress_reason: string | null; suppress_note: string | null; cvss: string | null;
@@ -52,7 +37,7 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
     `SELECT f.*, h.name AS host, (SELECT v.summary FROM vulns v WHERE v.id=f.vuln_id OR f.vuln_id = ANY(v.aliases) LIMIT 1) AS summary,
        (SELECT max(e.score) FROM epss e WHERE e.cve=f.vuln_id OR e.cve = ANY(SELECT unnest(v.aliases) FROM vulns v WHERE v.id=f.vuln_id)) AS epss,
        EXISTS(SELECT 1 FROM systems s WHERE s.host_id=f.host_id AND s.root = ANY(f.systems) AND s.exposure='public') AS pub
-     FROM findings f JOIN hosts h ON h.id=f.host_id WHERE ${where.join(' AND ')}
+     FROM findings f JOIN hosts h ON h.id=f.host_id WHERE ${whereSql}
      ORDER BY f.kev DESC, pub DESC, COALESCE((SELECT max(e.score) FROM epss e WHERE e.cve=f.vuln_id OR e.cve = ANY(SELECT unnest(v.aliases) FROM vulns v WHERE v.id=f.vuln_id)),0) DESC,
        CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END, f.cvss DESC NULLS LAST, f.first_seen DESC
      LIMIT ${PAGE} OFFSET ${page * PAGE}`,
@@ -85,6 +70,7 @@ export default async function FindingsPage({ searchParams }: { searchParams: Pro
         {sp.host && <Link href={link({ host: undefined, system: undefined })} className="btn-ghost">全ホスト</Link>}
         {sp.system && <Link href={link({ system: undefined })} className="btn-ghost col-span-2 truncate">システム：{sp.system === '__os__' ? 'OSパッケージ' : <Masked kind="system">{sp.system.split('/').pop() ?? ''}</Masked>} ✕</Link>}
         {status === 'suppressed' && <a href={`/api/vex${sp.host ? `?host=${sp.host}` : ''}`} className="btn-ghost">VEX（CycloneDX）を出力</a>}
+        <a href={`/api/findings/csv?${new URLSearchParams(Object.entries(sp).filter(([, v]) => v) as [string, string][])}`} className="btn-ghost" title="現在の絞り込みのままCSVで出力">⬇ CSV出力</a>
       </form>
       {/* phones: one card per finding */}
       <ul className="divide-y divide-line md:hidden">

@@ -45,7 +45,7 @@ function UnitCard({ icon, title, sparkTitle, sub, kev, crit, high, total, href, 
         {spark && spark.length > 1 && trend && <span className="ml-auto" title="クリックで拡大（日次の件数を表示）"><SparkLine values={spark} detail={{ points: trend, title: `${sparkTitle ?? 'このユニット'} の推移` }} /></span>}
       </div>
       <div className="mt-auto pt-1">
-        <Link href={href} className={total > 0 ? 'btn text-xs' : 'btn-ghost text-xs'}>{total > 0 ? '対応する →' : '詳細 →'}</Link>
+        <Link href={href} className={total > 0 ? 'btn text-xs' : 'btn-ghost text-xs'}>{total > 0 ? '確認する →' : '詳細 →'}</Link>
       </div>
     </div>
   );

@@ -6,6 +6,7 @@ import { q, q1 } from '@/lib/db';
 import { STACK_KEYS, detectStack } from '@/lib/systemmeta';
 import { addExclude, removeExclude, unregisterSystem, unsuppressVex } from '../../actions';
 import { VEX_LABEL } from '@/lib/vex';
+import { classifyLicense } from '@/lib/licenses';
 import { PendingButton } from '@/components/PendingButton';
 import { SystemForm } from '../SystemForm';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
@@ -28,6 +29,22 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
     "SELECT DISTINCT ecosystem || ':' || name AS k FROM host_packages WHERE host_id=$1 AND $2 = ANY(systems) AND ecosystem || ':' || name = ANY($3::text[])",
     [s.host_id, s.root, STACK_KEYS],
   );
+  // License composition of THIS project (per-project, not per-host). App ecosystems only — that is where
+  // OSS obligation (copyleft) risk lives; OS packages are out of scope.
+  const lics = await q<{ ecosystem: string; name: string; version: string; license: string | null }>(
+    `SELECT ecosystem, name, version, license FROM host_packages
+     WHERE host_id=$1 AND $2 = ANY(systems) AND ecosystem IN ('npm','PyPI','Packagist') AND license IS NOT NULL AND license <> ''`,
+    [s.host_id, s.root],
+  );
+  const licByClass = { strong: 0, weak: 0, permissive: 0, other: 0 } as Record<string, number>;
+  const licNotable: { pkg: string; license: string; cls: 'strong' | 'weak' }[] = [];
+  for (const p of lics) {
+    const c = classifyLicense(p.license);
+    if (c === 'unknown') continue;
+    licByClass[c] = (licByClass[c] ?? 0) + 1;
+    if (c === 'strong' || c === 'weak') licNotable.push({ pkg: `${p.name} ${p.version}`, license: p.license ?? '', cls: c });
+  }
+  licNotable.sort((a, b) => (a.cls === b.cls ? 0 : a.cls === 'strong' ? -1 : 1));
   const detected = detectStack(markers.map((m) => m.k), eco.map((e) => e.ecosystem));
   // A finding's `version` is aggregated across the whole host (all projects sharing the package),
   // so per-system views must show only the versions actually installed UNDER this system's root that
@@ -62,9 +79,11 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
   const wideRow = await cnt("source='os-advisory' AND pkg ~ '^(kernel|glibc|openssl|systemd|zlib|sudo|openssh)'", []);
   const total = await q1<{ n: string }>("SELECT count(*) AS n FROM findings WHERE host_id=$1 AND status='open' AND $2 = ANY(systems)", [s.host_id, s.root]);
   // open findings of this project + the host address, for the Claude Code remediation prompt picker
-  const picks = await q<{ id: string; vuln_id: string; pkg: string; version: string; fixed: string; severity: string; kev: boolean; os_status: string | null; os_fixed: string | null }>(
-    `SELECT f.id, f.vuln_id, f.pkg, ${sysVersion} AS version, f.fixed, f.severity, f.kev, st.status AS os_status, st.fixed AS os_fixed
+  const picks = await q<{ id: string; vuln_id: string; pkg: string; version: string; fixed: string; severity: string; kev: boolean; os_status: string | null; os_fixed: string | null; summary: string | null }>(
+    `SELECT f.id, f.vuln_id, f.pkg, ${sysVersion} AS version, f.fixed, f.severity, f.kev, st.status AS os_status, st.fixed AS os_fixed,
+       left(cl.data->'nvd'->>'description', 280) AS summary
      FROM findings f LEFT JOIN host_os_status st ON st.host_id=f.host_id AND st.vuln_id=f.vuln_id AND st.pkg=f.pkg
+       LEFT JOIN cve_lookups cl ON cl.cve=f.vuln_id
      WHERE f.host_id=$1 AND f.status='open' AND $2 = ANY(f.systems)
      ORDER BY f.kev DESC, CASE f.severity WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END LIMIT 300`,
     [s.host_id, s.root]);
@@ -143,7 +162,7 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
       )}
 
       {picks.length > 0 && (() => {
-        const pf = picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev, osStatus: (f.os_status as 'pending' | 'released' | null) ?? undefined, osFixed: f.os_fixed ?? undefined }));
+        const pf = picks.map((f) => ({ id: String(f.id), cve: f.vuln_id, pkg: f.pkg, version: f.version, fixed: f.fixed, severity: f.severity, kev: f.kev, osStatus: (f.os_status as 'pending' | 'released' | null) ?? undefined, osFixed: f.os_fixed ?? undefined, summary: f.summary ?? undefined }));
         const isOs = s.root === '__os__';
         const oid = isOs ? (hinfo?.os_id ?? '') : undefined;
         // Kernel vs the rest differ in runbook (reboot vs service restart), risk and timing, so the OS
@@ -215,7 +234,37 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
             <div className="flex flex-wrap gap-2">
               <a href={`/api/sbom?system=${s.id}`} className="btn-ghost">SBOM を出力</a>
               <a href={`/api/sbom?system=${s.id}&vex=1`} className="btn-ghost">SBOM＋VEX を出力</a>
+              <a href={`/api/findings/csv?host=${s.host_id}&system=${encodeURIComponent(s.root)}&all=1`} className="btn-ghost" title="このプロジェクトの脆弱性一覧をCSVで出力">脆弱性を CSV で出力</a>
             </div>
+          </Card>
+          <Card title="ライセンス構成（このプロジェクト）">
+            <p className="mb-2 text-xs text-muted">アプリ依存（npm / PyPI / Packagist）のライセンスです。OSパッケージは対象外。<Link className="text-accent" href="/licenses">要注意ライセンスの逆引き →</Link></p>
+            {lics.length === 0 ? (
+              <p className="text-xs text-muted">ライセンス情報はまだありません（収集・照会待ち、または対象エコシステムの部品なし）。</p>
+            ) : (
+              <>
+                <div className="mb-2 flex flex-wrap gap-2 text-xs">
+                  {licByClass.permissive > 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-700 dark:bg-green-950 dark:text-green-200">寛容 {licByClass.permissive}</span>}
+                  {licByClass.weak > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-200">弱いコピーレフト {licByClass.weak}</span>}
+                  {licByClass.strong > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700 dark:bg-red-950 dark:text-red-200">強いコピーレフト {licByClass.strong} ⚠</span>}
+                  {licByClass.other > 0 && <span className="rounded bg-slate-200 px-1.5 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">その他 {licByClass.other}</span>}
+                </div>
+                {licNotable.length > 0 && (
+                  <table className="tbl text-xs"><thead><tr><th>パッケージ</th><th>ライセンス</th><th>区分</th></tr></thead><tbody>
+                    {licNotable.slice(0, 50).map((p, i) => (
+                      <tr key={i}>
+                        <td className="break-all font-mono">{p.pkg}</td>
+                        <td className="font-mono">{p.license}</td>
+                        <td>{p.cls === 'strong'
+                          ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700 dark:bg-red-950 dark:text-red-200">強コピーレフト</span>
+                          : <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950 dark:text-amber-200">弱コピーレフト</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody></table>
+                )}
+                {licNotable.length === 0 && <p className="text-xs text-muted">要注意ライセンス（コピーレフト）は検出されていません。</p>}
+              </>
+            )}
           </Card>
           {s.origin === 'manual' && s.root !== '__os__' && (
             <Card title="監視対象から外す">

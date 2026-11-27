@@ -29,6 +29,7 @@ export interface PickFinding {
   //   'pending'  = vendor fix未リリース → nothing to apply yet (配布元待ち)
   osStatus?: 'pending' | 'released';
   osFixed?: string; // vendor fixed version (upgrade target) when released
+  summary?: string; // short NVD description (cached), for the read-only investigation prompt
 }
 
 // Lets the user tick specific CVEs on a project and generates a copy-paste Claude Code prompt that
@@ -51,6 +52,9 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
             : 'unknown';
   const pm = mgr; // back-compat alias used below
   const [sel, setSel] = useState<Set<string>>(() => new Set(findings.filter((f) => f.kev || f.severity === 'critical').map((f) => f.id)));
+  // Two prompt modes from the same selection: 'invest' (read-only threat assessment — decide fix/ignore)
+  // and 'fix' (the existing safe-upgrade prompt). Default to investigate: look before you touch.
+  const [mode, setMode] = useState<'invest' | 'fix'>('invest');
   const [copied, setCopied] = useState(false);
   const router = useRouter();
   const [reason, setReason] = useState('');
@@ -192,7 +196,7 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
     `# まず判定（重要）`,
     `${path} 配下のコード・依存・設定・実行環境を精査し、各CVEが**このシステムで実際に到達・悪用可能か**を評価してください（例：ランタイムが無い／該当コードが配置・実行されない／ビルド専用の devDependency で本番に関与しない、等）。その上で**結論を最初に明示**してください：`,
     `  (a) 修正する（到達可能、または予防的に妥当）`,
-    `  (b) 影響なし＝対処不要（理由を明記。この場合は**ファイルを変更せず**、理由と、minisoc2 に登録できる VEX 区分 code_not_present / code_not_reachable / requires_environment / requires_configuration などを併記）。★この判断は **minisoc2 の該当システム画面の「影響なし」ボタンから登録**してください。プロンプトでの報告やパッケージのアンインストールだけでは、画面の脆弱性は消えません（minisoc2 はあなたの頭の中の判断ではなく、登録された VEX と実体の版だけを見ます）。`,
+    `  (b) 影響なし＝対処不要（**ファイルを変更せず**、理由と、VEX区分 code_not_present / code_not_reachable / requires_environment / requires_configuration などを併記して報告。登録は人が minisoc2 の画面で行うので、判断材料が揃うように）。※パッケージのアンインストールや lockfile の書き換えだけでは画面の脆弱性は消えません（minisoc2 は登録された VEX と実体の版だけを見ます）。`,
     `  (c) 要確認（判断材料が足りない点を具体的に）`,
     `**対処が無意味なとき（(b)）は、無理にアップグレードせず、その旨をはっきり報告**してください（lockfileだけの書き換え等、実害ゼロの"作業のための作業"はしない）。`,
     ...(isPy ? pyTrap : []),
@@ -235,7 +239,69 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
     `- 対象パッケージ（${allPkgs.length}種）：${allPkgs.slice(0, 30).join('、')}${allPkgs.length > 30 ? ` 他${allPkgs.length - 30}種` : ''}`,
     `- 対象CVE（${allCves.length}件）：${allCves.slice(0, 20).join('、')}${allCves.length > 20 ? ` 他${allCves.length - 20}件` : ''}`,
   ].join('\n');
-  const prompt = bulk ? osBulkPrompt : isOs ? osPrompt : appPrompt;
+  // --- READ-ONLY investigation prompt --------------------------------------------------------------
+  // Same selection, different intent: assess whether each CVE is a real, reachable threat on THIS host,
+  // changing nothing. Scope-aware (kernel / non-kernel OS / project) and self-contained — each CVE line
+  // carries severity, KEV, version→fix and the cached NVD summary so the agent needs no network lookup.
+  const sevJ = (f: PickFinding) => (f.kev ? 'KEV（悪用確認済み）' : f.severity === 'critical' ? '緊急' : f.severity === 'high' ? '高' : f.severity === 'medium' ? '中' : '低');
+  // In bulk (non-kernel OS) mode there is no per-item selection, so investigate the urgent ones (KEV /
+  // critical), capped; otherwise investigate exactly what the user ticked.
+  const investTargets = bulk
+    ? (() => { const u = findings.filter((f) => f.kev || f.severity === 'critical'); return (u.length ? u : findings).slice(0, 20); })()
+    : chosen;
+  const cveLines = investTargets.flatMap((f) => {
+    const fixT = bestFixTarget(f.version, (f.fixed || '').split(/,\s*/));
+    const tail = fixT ? ` → 修正版 ${fixT} 以上` : f.osStatus === 'pending' ? '（配布元待ち：修正版未リリース）' : '（修正版は要確認）';
+    return [
+      `- ${f.cve}  [${sevJ(f)}]  ${f.pkg} ${f.version || '(版不明)'}${tail}`,
+      ...(f.summary ? [`    概要：${f.summary.replace(/\s+/g, ' ').trim()}`] : []),
+    ];
+  });
+  const scopeAspect = bulk
+    ? [
+        `- 各パッケージ、特に外部公開サービスが使うもの（Web / SSH / TLS / DB 等）が稼働・公開されているか。使っていないパッケージは実害が小さい。`,
+        `- 更新しても該当プロセスを再起動しないと旧ライブラリを掴んだままで実質未解消。稼働プロセスも確認（読み取りのみ）。`,
+      ]
+    : isOs
+    ? [
+        `- 稼働中カーネル（uname -r）が脆弱範囲か。より新しい修正版カーネルが配信済みか。`,
+        `- 各CVEが remote（ネットワーク到達）／ local（ローカル）／ 権限昇格 のどれか。外部から到達する経路があるか。`,
+        `- コンテナ / クラウドで、そのカーネル機能・サブシステムを実際に使っているか。`,
+      ]
+    : [
+        `- ${path} 配下で、該当パッケージが本番の実行経路から呼ばれるか（devDependency / ビルド専用 / 未使用なら到達不可の可能性）。`,
+        `- 脆弱な機能・関数が実際に使われ、外部入力が届くか。`,
+        `- 実行に必要なランタイム・設定が存在するか（無ければ動かない＝影響なし）。`,
+      ];
+  const investScopeName = bulk ? 'OSパッケージ（カーネル以外）' : isOs ? 'OSカーネル' : `プロジェクト「${system}」（${path}）`;
+  const investPrompt = investTargets.length === 0 ? '（上の一覧で調べたいCVEにチェックを入れてください）' : [
+    ...idHeader,
+    `# これは調査専用プロンプトです（READ-ONLY・絶対に変更しない）`,
+    `禁止：パッケージの更新 / インストール / 削除、ファイル編集、サービス再起動、設定変更。読み取りコマンドのみ。`,
+    ``,
+    `ホスト「${host}」の ${investScopeName} について、以下のCVEが「このホスト／システムで実際に悪用可能な脅威か」を、変更を一切加えずに判定してください（対処するか・無視するかの判断材料にします）。`,
+    ``,
+    `# 対象（minisoc2 の検出・${bulk ? `緊急/KEV ${investTargets.length}件を抜粋` : `選択 ${investTargets.length}件`}）`,
+    ...cveLines,
+    ``,
+    `# 調べる観点（各CVEについて）`,
+    `1. 実在性：稼働中の実体の版が本当に脆弱範囲か（${isOs ? 'dpkg -l / rpm -q、カーネルは uname -r' : 'dpkg -l / rpm -q / pip show の Location / import 時の __file__'}）。`,
+    `2. 到達性：該当機能がこのホスト／システムで実際に配置・実行・到達するか：`,
+    ...scopeAspect.map((a) => `   ${a}`),
+    `3. 露出：外部からの到達経路があるか（ポート / 認証 / ネットワーク境界。ss -tlnp 等は読み取りのみ）。`,
+    `4. KEV / 悪用：KEV該当か、既知の実悪用（PoC・攻撃報告）があるか。`,
+    `5. 緩和：既存の設定・権限・WAF・SELinux 等で実質的に緩和されていないか。`,
+    ...(isPy ? pyTrap : []),
+    ``,
+    `# 出力（CVEごとに結論を先頭に）`,
+    `- 🔴 実脅威：到達・悪用が可能。根拠（版 / 到達経路 / 悪用状況）とともに「対処する」を推奨。`,
+    `- 🟡 要確認：判断材料が不足。何を追加で確認すべきかを具体的に。`,
+    `- 🟢 影響なし：理由を明記し、VEX区分（code_not_present / code_not_reachable / requires_environment / requires_configuration / protected_by_mitigating_control）を併記して報告（登録は人が画面で行うので、判断材料が揃うように）。`,
+    `最後に「対処すべきCVE」と「無視してよいCVE」を一覧で要約してください。`,
+  ].join('\n');
+
+  const fixPrompt = bulk ? osBulkPrompt : isOs ? osPrompt : appPrompt;
+  const prompt = mode === 'invest' ? investPrompt : fixPrompt;
 
   // Demo masking: the prompt embeds the real host name, address, host id, project name and path (on
   // purpose — it's run on that exact host). For a screen-shared demo, replace those identity tokens with
@@ -361,6 +427,16 @@ export function RemediationPicker({ host, address, path, system, systemId, osId,
         <p className="text-xs text-muted">このOSは<b>個別に選ぶのではなく一括更新</b>が正道です。下のプロンプトをそのまま対象ホストで実行してください。対象一覧（{findings.length}件）は参考です。</p>
       )}
       {listBody}
+      {/* Mode switch: one selection, two prompts. Investigate (read-only) first, then fix. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <div className="inline-flex rounded-lg border border-line bg-bg p-0.5 text-xs">
+          <button type="button" onClick={() => setMode('invest')} aria-pressed={mode === 'invest'}
+            className={`rounded-md px-3 py-1.5 font-semibold ${mode === 'invest' ? 'bg-accent text-white dark:text-black' : 'text-muted'}`}>🔍 調べる（READ-ONLY）</button>
+          <button type="button" onClick={() => setMode('fix')} aria-pressed={mode === 'fix'}
+            className={`rounded-md px-3 py-1.5 font-semibold ${mode === 'fix' ? 'bg-accent text-white dark:text-black' : 'text-muted'}`}>🛠 直す（対処）</button>
+        </div>
+        <span className="text-xs text-muted">{mode === 'invest' ? '変更せず、選んだCVEが実際に脅威かを判定します（対処する前の確認）。' : '選んだCVEを安全な手順で解消します（直すと決めた後）。'}</span>
+      </div>
       {/* On phones the CVE list is long; keep the primary copy action within thumb reach as a sticky
           bottom bar. On >=sm it returns to a normal right-aligned button. */}
       <div className="sticky bottom-0 z-10 flex justify-end border-t border-line bg-bg/95 py-2 backdrop-blur sm:static sm:border-0 sm:bg-transparent sm:py-0 sm:backdrop-blur-none">
