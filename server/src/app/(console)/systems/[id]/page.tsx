@@ -234,7 +234,7 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
             {licByClass.permissive > 0 && <span className="mr-1 rounded bg-green-100 px-1.5 py-0.5 text-green-700 dark:bg-green-950 dark:text-green-200">寛容 {licByClass.permissive}</span>}
             {licByClass.weak > 0 && <span className="mr-1 rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-200">弱 {licByClass.weak}</span>}
             {licByClass.strong > 0 && <span className="mr-1 rounded bg-red-100 px-1.5 py-0.5 text-red-700 dark:bg-red-950 dark:text-red-200">強コピーレフト {licByClass.strong} ⚠</span>}
-            <Link className="text-accent" href="/licenses">逆引き →</Link>
+            <Link className="text-accent" href="/sbom?license=copyleft">逆引き →</Link>
           </p>
         )}
         {comps.length === 0
