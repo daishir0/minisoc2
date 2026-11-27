@@ -6,7 +6,7 @@ import { Masked } from '@/components/Mask';
 // Fleet-wide SBOM browser: debounced server-side search over /api/components with host / ecosystem /
 // layer / license / vuln filters, a reverse-lookup "used by" column, and pagination. Responsive (table on
 // desktop, cards on phones). The per-project SbomTable stays for the small, single-project view.
-interface Comp { pkg: string; version: string; eco: string; license: string; cls: 'strong' | 'weak' | 'perm' | 'unk'; purl: string; vuln: '' | 'kev' | 'crit'; nhosts: number; hosts: string[] }
+interface Comp { pkg: string; version: string; eco: string; license: string; cls: 'strong' | 'weak' | 'perm' | 'unk'; purl: string; vuln: '' | 'kev' | 'crit'; nhosts: number; hosts: string[]; nprojects: number; projects: string[] }
 const CLS: Record<Comp['cls'], [string, string]> = {
   strong: ['bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-200', '強'],
   weak: ['bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200', '弱'],
@@ -22,10 +22,15 @@ function Lic({ d }: { d: Comp }) { const [c, l] = CLS[d.cls]; return <><span cla
 function Uses({ d }: { d: Comp }) {
   return <span className="text-xs">{d.hosts.map((h, i) => <span key={i}>{i > 0 && '、'}<Masked kind="host">{h}</Masked></span>)}{d.nhosts > d.hosts.length && <span className="text-muted"> 他{d.nhosts - d.hosts.length}</span>}</span>;
 }
+function Projects({ d }: { d: Comp }) {
+  if (!d.projects.length) return <span className="text-xs text-muted">—</span>;
+  return <span className="text-xs">{d.projects.map((p, i) => <span key={i}>{i > 0 && '、'}<Masked kind="system">{p}</Masked></span>)}{d.nprojects > d.projects.length && <span className="text-muted"> 他{d.nprojects - d.projects.length}</span>}</span>;
+}
 
-export function SbomBrowser({ hosts, ecos, initialLicense = '' }: { hosts: { id: string; name: string }[]; ecos: string[]; initialLicense?: string }) {
+export function SbomBrowser({ hosts, ecos, projects, initialLicense = '' }: { hosts: { id: string; name: string }[]; ecos: string[]; projects: { root: string; name: string; hostId: string }[]; initialLicense?: string }) {
   const [q, setQ] = useState('');
   const [host, setHost] = useState('');
+  const [project, setProject] = useState('');
   const [eco, setEco] = useState('');
   const [layer, setLayer] = useState('');
   const [license, setLicense] = useState(initialLicense);
@@ -37,12 +42,12 @@ export function SbomBrowser({ hosts, ecos, initialLicense = '' }: { hosts: { id:
 
   const params = () => {
     const p = new URLSearchParams();
-    if (q) p.set('q', q); if (host) p.set('host', host); if (eco) p.set('eco', eco);
+    if (q) p.set('q', q); if (host) p.set('host', host); if (project) p.set('project', project); if (eco) p.set('eco', eco);
     if (layer) p.set('layer', layer); if (license) p.set('license', license); if (vuln) p.set('vuln', vuln);
     p.set('page', String(page));
     return p;
   };
-  useEffect(() => { setPage(0); }, [q, host, eco, layer, license, vuln]);
+  useEffect(() => { setPage(0); }, [q, host, project, eco, layer, license, vuln]);
   useEffect(() => {
     clearTimeout(deb.current);
     deb.current = setTimeout(async () => {
@@ -54,8 +59,15 @@ export function SbomBrowser({ hosts, ecos, initialLicense = '' }: { hosts: { id:
     }, 220);
     return () => clearTimeout(deb.current);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [q, host, eco, layer, license, vuln, page]);
+  }, [q, host, project, eco, layer, license, vuln, page]);
 
+  // Project dropdown options: when a host is chosen, its projects; otherwise all (deduped by root+name).
+  const projOpts = (() => {
+    const src = host ? projects.filter((p) => p.hostId === host) : projects;
+    const seen = new Set<string>(); const out: { root: string; name: string }[] = [];
+    for (const p of src) { const k = `${p.root}\u0000${p.name}`; if (!seen.has(k)) { seen.add(k); out.push({ root: p.root, name: p.name }); } }
+    return out.sort((a, b) => a.name.localeCompare(b.name));
+  })();
   const chip = (on: boolean) => `rounded-full border px-2.5 py-1 text-xs font-semibold ${on ? 'border-transparent bg-accent text-white dark:text-black' : 'border-line bg-panel text-muted'}`;
   const pages = Math.max(1, Math.ceil(data.total / data.per));
   const csvHref = () => { const p = params(); p.delete('page'); p.set('format', 'csv'); return `/api/components?${p}`; };
@@ -67,7 +79,13 @@ export function SbomBrowser({ hosts, ecos, initialLicense = '' }: { hosts: { id:
         <a href={csvHref()} className="btn-ghost text-xs">⬇ CSV（絞り込み）</a>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        <select value={host} onChange={(e) => setHost(e.target.value)} className="input w-auto text-sm"><option value="">全ホスト</option>{hosts.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select>
+        <select value={host} onChange={(e) => { setHost(e.target.value); setProject(''); }} className="input w-auto text-sm"><option value="">全ホスト</option>{hosts.map((h) => <option key={h.id} value={h.id}>{h.name}</option>)}</select>
+        {projOpts.length > 0 && (
+          <select value={project} onChange={(e) => setProject(e.target.value)} className="input w-auto text-sm">
+            <option value="">全プロジェクト</option>
+            {projOpts.map((p) => <option key={p.root} value={p.root}>{p.name}</option>)}
+          </select>
+        )}
         <select value={eco} onChange={(e) => setEco(e.target.value)} className="input w-auto text-sm"><option value="">全エコシステム</option>{ecos.map((e) => <option key={e} value={e}>{e}</option>)}</select>
         <select value={layer} onChange={(e) => setLayer(e.target.value)} className="input w-auto text-sm"><option value="">全レイヤ</option><option value="app">アプリ依存</option><option value="os">OS</option></select>
         <button type="button" onClick={() => setLicense(license === 'copyleft' ? '' : 'copyleft')} className={chip(license === 'copyleft')}>コピーレフトのみ</button>
@@ -78,7 +96,7 @@ export function SbomBrowser({ hosts, ecos, initialLicense = '' }: { hosts: { id:
 
       <div className="hidden overflow-x-auto rounded border border-line sm:block">
         <table className="tbl text-sm">
-          <thead><tr><th>パッケージ</th><th>バージョン</th><th>エコシステム</th><th>ライセンス</th><th>脆弱性</th><th>使用ホスト（逆引き）</th></tr></thead>
+          <thead><tr><th>パッケージ</th><th>バージョン</th><th>エコシステム</th><th>ライセンス</th><th>脆弱性</th><th>使用ホスト</th><th>プロジェクト</th></tr></thead>
           <tbody>
             {data.rows.map((d, i) => (
               <tr key={i}>
@@ -88,6 +106,7 @@ export function SbomBrowser({ hosts, ecos, initialLicense = '' }: { hosts: { id:
                 <td className="whitespace-nowrap"><Lic d={d} /></td>
                 <td><Vuln v={d.vuln} /></td>
                 <td><Uses d={d} /></td>
+                <td><Projects d={d} /></td>
               </tr>
             ))}
           </tbody>
@@ -98,7 +117,8 @@ export function SbomBrowser({ hosts, ecos, initialLicense = '' }: { hosts: { id:
           <div key={i} className="rounded-lg border border-line bg-panel p-3">
             <div className="flex items-baseline justify-between gap-2"><span className="break-all font-mono text-sm font-semibold">{d.pkg}</span><Vuln v={d.vuln} /></div>
             <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted"><span className="font-mono tabular-nums">{d.version.slice(0, 40)}</span><span>{d.eco}</span><Lic d={d} /></div>
-            <div className="mt-1"><Uses d={d} /></div>
+            <div className="mt-1 text-xs"><span className="text-muted">ホスト：</span><Uses d={d} /></div>
+            <div className="text-xs"><span className="text-muted">プロジェクト：</span><Projects d={d} /></div>
           </div>
         ))}
       </div>

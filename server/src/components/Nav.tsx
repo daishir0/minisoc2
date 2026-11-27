@@ -6,10 +6,10 @@ import { usePathname } from 'next/navigation';
 // Four destinations mapped to the workflow: register assets -> auto-detect (vuln/log/integrity)
 // -> remediate. Everything else lives inside them.
 // Remediation now lives on the system pages (/systems/[id]); there is no separate 対応 section.
+// Home is reached via the "minisoc2" brand link in the header, so it is not a separate tab.
 export const SECTIONS = [
-  { href: '/', label: 'ホーム', icon: '🏠', match: (p: string) => p === '/' },
   { href: '/hosts', label: '資産', icon: '🖥', match: (p: string) => /^\/(assets|hosts|systems|enroll)/.test(p) },
-  { href: '/findings', label: '検知', icon: '🛡', match: (p: string) => /^\/(detect|findings|logs|integrity|changes|explore|cve|alerts|watch)/.test(p) },
+  { href: '/findings', label: '検知', icon: '🛡', match: (p: string) => /^\/(detect|findings|logs|integrity|changes|explore|cve|alerts|watch|sbom|licenses)/.test(p) },
 ];
 
 export interface NavBadges { assets?: number; detect?: number }
@@ -42,7 +42,7 @@ export function TopNav({ badges = {} }: { badges?: NavBadges }) {
 export function MobileNav({ badges = {} }: { badges?: NavBadges }) {
   const path = usePathname();
   return (
-    <nav className="grid grid-cols-3 border-t border-line bg-panel md:hidden">
+    <nav className="grid grid-cols-2 border-t border-line bg-panel md:hidden">
       {SECTIONS.map((s) => {
         const b = badgeFor(s.href, badges);
         const on = s.match(path);

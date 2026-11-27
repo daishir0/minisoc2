@@ -12,6 +12,7 @@ export default async function SbomPage({ searchParams }: { searchParams: Promise
   const sp = await searchParams;
   const hosts = await q<{ id: string; name: string }>('SELECT id, name FROM hosts WHERE NOT disabled ORDER BY name');
   const ecos = (await q<{ ecosystem: string }>('SELECT ecosystem, count(*) n FROM host_packages GROUP BY ecosystem ORDER BY n DESC')).map((r) => r.ecosystem);
+  const projects = await q<{ root: string; name: string; hostId: string }>("SELECT root, name, host_id AS \"hostId\" FROM systems WHERE NOT ignored AND root <> '__os__' ORDER BY name");
   const initialLicense = sp.license === 'copyleft' ? 'copyleft' : '';
   return (
     <>
@@ -21,7 +22,7 @@ export default async function SbomPage({ searchParams }: { searchParams: Promise
           全ホストの部品を横断検索。「どの部品が・どこに・どんなライセンス/脆弱性で入っているか」を調べられます（例：特定ライブラリの影響範囲、コピーレフトの所在）。
           各プロジェクト単位の部品表は各システム画面の「SBOM：部品一覧」にあります。
         </p>
-        <SbomBrowser hosts={hosts} ecos={ecos} initialLicense={initialLicense} />
+        <SbomBrowser hosts={hosts} ecos={ecos} projects={projects} initialLicense={initialLicense} />
       </Card>
     </>
   );

@@ -16,6 +16,8 @@ function filters(sp: URLSearchParams): { where: string; params: unknown[] } {
   const where: string[] = [];
   const host = sp.get('host');
   if (host && /^[0-9a-f-]{36}$/.test(host)) { params.push(host); where.push(`hp.host_id=$${params.length}`); }
+  const project = sp.get('project');
+  if (project) { params.push(project); where.push(`$${params.length} = ANY(hp.systems)`); }
   const eco = sp.get('eco');
   if (eco && /^[\w:.-]{1,40}$/.test(eco)) { params.push(eco); where.push(`hp.ecosystem=$${params.length}`); }
   const layer = sp.get('layer');
@@ -32,16 +34,20 @@ function filters(sp: URLSearchParams): { where: string; params: unknown[] } {
 
 const SELECT = `
   FROM host_packages hp JOIN hosts h ON h.id=hp.host_id
+  LEFT JOIN LATERAL unnest(hp.systems) AS sysr(root) ON true
+  LEFT JOIN systems sy ON sy.host_id=hp.host_id AND sy.root=sysr.root
   LEFT JOIN (SELECT ecosystem, pkg, bool_or(kev) AS kev, bool_or(severity='critical') AS crit
              FROM findings WHERE status='open' GROUP BY ecosystem, pkg) f
     ON f.ecosystem=hp.ecosystem AND f.pkg=hp.name`;
 
-interface Row { ecosystem: string; name: string; version: string; license: string | null; nhosts: string; hosts: string[]; kev: boolean | null; crit: boolean | null }
+interface Row { ecosystem: string; name: string; version: string; license: string | null; nhosts: string; hosts: string[]; nprojects: string; projects: string[]; kev: boolean | null; crit: boolean | null }
 
 async function rows(where: string, params: unknown[], limit: number, offset: number): Promise<Row[]> {
   return q<Row>(
     `SELECT hp.ecosystem, hp.name, hp.version, max(hp.license) AS license,
        count(DISTINCT hp.host_id) AS nhosts, (array_agg(DISTINCT h.name))[1:5] AS hosts,
+       count(DISTINCT coalesce(sy.name, sysr.root)) FILTER (WHERE sysr.root IS NOT NULL AND sysr.root <> '__os__') AS nprojects,
+       (array_remove(array_agg(DISTINCT coalesce(sy.name, nullif(sysr.root,'__os__'))), NULL))[1:5] AS projects,
        bool_or(f.kev) AS kev, bool_or(f.crit) AS crit
      ${SELECT} ${where}
      GROUP BY hp.ecosystem, hp.name, hp.version
@@ -56,6 +62,7 @@ function toComp(r: Row) {
     pkg: r.name, version: r.version, eco: r.ecosystem, license: r.license || '不明',
     cls: clsMap[classifyLicense(r.license)], purl: purl(r.ecosystem, r.name, r.version) ?? `${r.ecosystem}:${r.name}@${r.version}`,
     vuln, nhosts: Number(r.nhosts), hosts: r.hosts ?? [],
+    nprojects: Number(r.nprojects ?? 0), projects: (r.projects ?? []).map((p) => p.split('/').pop() || p),
   };
 }
 
@@ -68,9 +75,9 @@ export async function GET(req: Request) {
   if (sp.get('format') === 'csv') {
     const rs = await rows(where, params, 5000, 0);
     const cell = (v: unknown) => `"${String(v ?? '').replace(/"/g, '""')}"`;
-    const head = ['ecosystem', 'package', 'version', 'license', 'vuln', 'hosts', 'host_count', 'purl'];
+    const head = ['ecosystem', 'package', 'version', 'license', 'vuln', 'hosts', 'host_count', 'projects', 'project_count', 'purl'];
     const lines = [head.join(',')];
-    for (const r of rs.map(toComp)) lines.push([r.eco, r.pkg, r.version, r.license, r.vuln, r.hosts.join(';'), r.nhosts, r.purl].map(cell).join(','));
+    for (const r of rs.map(toComp)) lines.push([r.eco, r.pkg, r.version, r.license, r.vuln, r.hosts.join(';'), r.nhosts, r.projects.join(';'), r.nprojects, r.purl].map(cell).join(','));
     return new Response('﻿' + lines.join('\r\n') + '\r\n', {
       headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="minisoc2-components-${new Date().toISOString().slice(0, 10)}.csv"` },
     });
