@@ -7,6 +7,8 @@ import { STACK_KEYS, detectStack } from '@/lib/systemmeta';
 import { addExclude, removeExclude, unregisterSystem, unsuppressVex } from '../../actions';
 import { VEX_LABEL } from '@/lib/vex';
 import { classifyLicense } from '@/lib/licenses';
+import { purl } from '@/lib/purl';
+import { SbomTable } from '@/components/SbomTable';
 import { PendingButton } from '@/components/PendingButton';
 import { SystemForm } from '../SystemForm';
 import { Breadcrumbs, CRUMB } from '@/components/Breadcrumbs';
@@ -31,20 +33,23 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
   );
   // License composition of THIS project (per-project, not per-host). App ecosystems only — that is where
   // OSS obligation (copyleft) risk lives; OS packages are out of scope.
-  const lics = await q<{ ecosystem: string; name: string; version: string; license: string | null }>(
-    `SELECT ecosystem, name, version, license FROM host_packages
-     WHERE host_id=$1 AND $2 = ANY(systems) AND ecosystem IN ('npm','PyPI','Packagist') AND license IS NOT NULL AND license <> ''`,
+  // Full component list for the on-screen SBOM table: name/version/purl/license + a per-package vuln flag.
+  const rawComps = await q<{ ecosystem: string; name: string; version: string; license: string | null; vuln: string | null }>(
+    `SELECT hp.ecosystem, hp.name, hp.version, hp.license,
+       (SELECT CASE WHEN bool_or(f.kev) THEN 'kev' WHEN bool_or(f.severity='critical') THEN 'crit' ELSE '' END
+          FROM findings f WHERE f.host_id=hp.host_id AND f.ecosystem=hp.ecosystem AND f.pkg=hp.name AND f.status='open' AND $2 = ANY(f.systems)) AS vuln
+     FROM host_packages hp WHERE hp.host_id=$1 AND $2 = ANY(hp.systems)
+     ORDER BY hp.ecosystem, hp.name`,
     [s.host_id, s.root],
   );
-  const licByClass = { strong: 0, weak: 0, permissive: 0, other: 0 } as Record<string, number>;
-  const licNotable: { pkg: string; license: string; cls: 'strong' | 'weak' }[] = [];
-  for (const p of lics) {
-    const c = classifyLicense(p.license);
-    if (c === 'unknown') continue;
-    licByClass[c] = (licByClass[c] ?? 0) + 1;
-    if (c === 'strong' || c === 'weak') licNotable.push({ pkg: `${p.name} ${p.version}`, license: p.license ?? '', cls: c });
-  }
-  licNotable.sort((a, b) => (a.cls === b.cls ? 0 : a.cls === 'strong' ? -1 : 1));
+  const CLS_MAP = { strong: 'strong', weak: 'weak', permissive: 'perm', other: 'unk', unknown: 'unk' } as const;
+  const comps = rawComps.map((p) => ({
+    pkg: p.name, version: p.version, eco: p.ecosystem, license: p.license || '不明',
+    cls: CLS_MAP[classifyLicense(p.license)], purl: purl(p.ecosystem, p.name, p.version) ?? `${p.ecosystem}:${p.name}@${p.version}`,
+    vuln: (p.vuln === 'kev' ? 'kev' : p.vuln === 'crit' ? 'crit' : '') as '' | 'kev' | 'crit',
+  }));
+  const licByClass = { strong: 0, weak: 0, permissive: 0 } as Record<string, number>;
+  for (const p of rawComps) { if (p.ecosystem === 'npm' || p.ecosystem === 'PyPI' || p.ecosystem === 'Packagist') { const c = classifyLicense(p.license); if (c === 'strong' || c === 'weak' || c === 'permissive') licByClass[c]++; } }
   const detected = detectStack(markers.map((m) => m.k), eco.map((e) => e.ecosystem));
   // A finding's `version` is aggregated across the whole host (all projects sharing the package),
   // so per-system views must show only the versions actually installed UNDER this system's root that
@@ -212,8 +217,33 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
         </Card>
       )}
 
+      {/* SBOM promoted to a first-class, full-width card (was buried in 設定・詳細). Component list with
+          incremental search + filters; export buttons on the header. */}
+      <Card title="SBOM：部品一覧">
+        <div className="mb-3 flex flex-wrap items-center gap-2">
+          <p className="text-xs text-muted">自前の依存・使っている実行環境・OS の部品。name / version / purl / ライセンス。purl・versionで脆弱性照合。</p>
+          <span className="ml-auto flex flex-wrap gap-2">
+            <a href={`/api/sbom?system=${s.id}`} className="btn-ghost">⬇ SBOM(CycloneDX)</a>
+            <a href={`/api/sbom?system=${s.id}&vex=1`} className="btn-ghost">⬇ SBOM＋VEX</a>
+            <a href={`/api/findings/csv?host=${s.host_id}&system=${encodeURIComponent(s.root)}&all=1`} className="btn-ghost" title="このプロジェクトの脆弱性一覧をCSVで出力">⬇ 脆弱性CSV</a>
+          </span>
+        </div>
+        {(licByClass.strong > 0 || licByClass.weak > 0) && (
+          <p className="mb-2 text-xs">
+            <span className="text-muted">ライセンス：</span>
+            {licByClass.permissive > 0 && <span className="mr-1 rounded bg-green-100 px-1.5 py-0.5 text-green-700 dark:bg-green-950 dark:text-green-200">寛容 {licByClass.permissive}</span>}
+            {licByClass.weak > 0 && <span className="mr-1 rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-200">弱 {licByClass.weak}</span>}
+            {licByClass.strong > 0 && <span className="mr-1 rounded bg-red-100 px-1.5 py-0.5 text-red-700 dark:bg-red-950 dark:text-red-200">強コピーレフト {licByClass.strong} ⚠</span>}
+            <Link className="text-accent" href="/licenses">逆引き →</Link>
+          </p>
+        )}
+        {comps.length === 0
+          ? <p className="text-sm text-muted">部品はまだ収集されていません（収集待ち）。</p>
+          : <SbomTable components={comps} />}
+      </Card>
+
       <details className="rounded-lg border border-line">
-        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">⚙️ 設定・詳細（登録内容／概要／SBOM／除外パス／改ざん監視）</summary>
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold">⚙️ 設定・詳細（登録内容／概要／除外パス／改ざん監視）</summary>
         <div className="space-y-6 border-t border-line p-4">
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
@@ -228,43 +258,6 @@ export default async function SystemPage({ params, searchParams }: { params: Pro
               <dt className="text-muted">検出</dt><dd>{s.origin === 'manual' ? '手動登録' : '自動検出'}・初回 {ago(s.first_seen)}</dd>
               <dt className="text-muted">最終確認</dt><dd>{ago(s.last_seen)}</dd>
             </dl>
-          </Card>
-          <Card title="SBOM（CycloneDX 1.6）">
-            <p className="mb-2 text-xs text-muted">自前の依存・使っている実行環境・OS の部品を含みます。除外したパッケージも「除外」の印と理由つきで残します。</p>
-            <div className="flex flex-wrap gap-2">
-              <a href={`/api/sbom?system=${s.id}`} className="btn-ghost">SBOM を出力</a>
-              <a href={`/api/sbom?system=${s.id}&vex=1`} className="btn-ghost">SBOM＋VEX を出力</a>
-              <a href={`/api/findings/csv?host=${s.host_id}&system=${encodeURIComponent(s.root)}&all=1`} className="btn-ghost" title="このプロジェクトの脆弱性一覧をCSVで出力">脆弱性を CSV で出力</a>
-            </div>
-          </Card>
-          <Card title="ライセンス構成（このプロジェクト）">
-            <p className="mb-2 text-xs text-muted">アプリ依存（npm / PyPI / Packagist）のライセンスです。OSパッケージは対象外。<Link className="text-accent" href="/licenses">要注意ライセンスの逆引き →</Link></p>
-            {lics.length === 0 ? (
-              <p className="text-xs text-muted">ライセンス情報はまだありません（収集・照会待ち、または対象エコシステムの部品なし）。</p>
-            ) : (
-              <>
-                <div className="mb-2 flex flex-wrap gap-2 text-xs">
-                  {licByClass.permissive > 0 && <span className="rounded bg-green-100 px-1.5 py-0.5 text-green-700 dark:bg-green-950 dark:text-green-200">寛容 {licByClass.permissive}</span>}
-                  {licByClass.weak > 0 && <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-800 dark:bg-amber-950 dark:text-amber-200">弱いコピーレフト {licByClass.weak}</span>}
-                  {licByClass.strong > 0 && <span className="rounded bg-red-100 px-1.5 py-0.5 text-red-700 dark:bg-red-950 dark:text-red-200">強いコピーレフト {licByClass.strong} ⚠</span>}
-                  {licByClass.other > 0 && <span className="rounded bg-slate-200 px-1.5 py-0.5 text-slate-600 dark:bg-slate-800 dark:text-slate-300">その他 {licByClass.other}</span>}
-                </div>
-                {licNotable.length > 0 && (
-                  <table className="tbl text-xs"><thead><tr><th>パッケージ</th><th>ライセンス</th><th>区分</th></tr></thead><tbody>
-                    {licNotable.slice(0, 50).map((p, i) => (
-                      <tr key={i}>
-                        <td className="break-all font-mono">{p.pkg}</td>
-                        <td className="font-mono">{p.license}</td>
-                        <td>{p.cls === 'strong'
-                          ? <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] text-red-700 dark:bg-red-950 dark:text-red-200">強コピーレフト</span>
-                          : <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-800 dark:bg-amber-950 dark:text-amber-200">弱コピーレフト</span>}</td>
-                      </tr>
-                    ))}
-                  </tbody></table>
-                )}
-                {licNotable.length === 0 && <p className="text-xs text-muted">要注意ライセンス（コピーレフト）は検出されていません。</p>}
-              </>
-            )}
           </Card>
           {s.origin === 'manual' && s.root !== '__os__' && (
             <Card title="監視対象から外す">

@@ -1,17 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { currentUser } from '@/lib/auth';
 import { q, q1 } from '@/lib/db';
-
-function purl(eco: string, name: string, version: string, osId: string): string | undefined {
-  const v = encodeURIComponent(version);
-  if (eco === 'npm') return `pkg:npm/${name.startsWith('@') ? `%40${name.slice(1)}` : name}@${v}`;
-  if (eco === 'PyPI') return `pkg:pypi/${name}@${v}`;
-  if (eco === 'Packagist') return `pkg:composer/${name}@${v}`;
-  if (eco === 'rpm') return `pkg:rpm/${osId || 'linux'}/${name}@${v}`;
-  if (/^(Debian|Ubuntu)/.test(eco)) return `pkg:deb/${eco.split(':')[0].toLowerCase()}/${name}@${v}`;
-  if (/^Alpine/.test(eco)) return `pkg:apk/alpine/${name}@${v}`;
-  return undefined;
-}
+import { purl } from '@/lib/purl';
 
 // CycloneDX 1.6 SBOM of one system: its own dependencies, the runtime and OS packages its services
 // use, and the packages excluded by path (kept, marked excluded). ?vex=1 adds vulnerability analysis.
