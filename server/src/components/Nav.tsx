@@ -8,8 +8,8 @@ import { usePathname } from 'next/navigation';
 // Remediation now lives on the system pages (/systems/[id]); there is no separate 対応 section.
 // Home is reached via the "minisoc2" brand link in the header, so it is not a separate tab.
 export const SECTIONS = [
-  { href: '/hosts', label: '資産', icon: '🖥', match: (p: string) => /^\/(assets|hosts|systems|enroll)/.test(p) },
-  { href: '/findings', label: '検知', icon: '🛡', match: (p: string) => /^\/(detect|findings|logs|integrity|changes|explore|cve|alerts|watch|sbom|licenses)/.test(p) },
+  { href: '/hosts', label: '資産', icon: '🖥', match: (p: string) => /^\/(assets|hosts|systems|enroll|sbom|licenses)/.test(p) },
+  { href: '/findings', label: '脅威', icon: '🛡', match: (p: string) => /^\/(detect|findings|logs|integrity|changes|explore|cve|alerts|watch)/.test(p) },
 ];
 
 export interface NavBadges { assets?: number; detect?: number }

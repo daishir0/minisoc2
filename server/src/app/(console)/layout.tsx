@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Masked, MaskProvider, MaskToggle } from '@/components/Mask';
 import { MobileNav, TopNav } from '@/components/Nav';
 import { SearchToggle } from '@/components/SearchToggle';
+import { CveSearchToggle } from '@/components/CveSearchToggle';
 import { MenuAutoClose } from '@/components/MenuAutoClose';
 import { requireUser } from '@/lib/auth';
 import { MASK_COOKIE } from '@/lib/mask';
@@ -22,6 +23,7 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
           <Link href="/" className="font-semibold">minisoc2</Link>
           <TopNav badges={badges} />
           <div className="ml-auto flex items-center gap-1">
+            <CveSearchToggle />
             <SearchToggle />
             <details data-autoclose className="group relative">
               <summary className="btn-ghost list-none" aria-label="設定とアカウント">⚙</summary>

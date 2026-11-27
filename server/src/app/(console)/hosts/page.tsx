@@ -7,6 +7,7 @@ import { q } from '@/lib/db';
 import { FleetOps } from '@/components/FleetOps';
 import { TreeState } from '@/components/TreeState';
 import { ConfirmCollect } from '@/components/ConfirmCollect';
+import { AssetTabs } from '@/components/AssetTabs';
 
 export default async function HostsPage() {
   const hosts = await q<{
@@ -55,6 +56,7 @@ export default async function HostsPage() {
 
   return (
     <>
+      <AssetTabs />
       <Breadcrumbs items={[CRUMB.home, { label: '資産' }]} />
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <h1 className="mr-auto text-xl font-semibold">資産（ホスト {hosts.length}台・登録プロジェクト {projects.length}）</h1>
