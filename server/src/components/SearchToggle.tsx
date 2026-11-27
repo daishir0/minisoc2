@@ -21,7 +21,7 @@ export function SearchToggle() {
     <div ref={box} className="relative">
       <button type="button" onClick={() => setOpen((o) => !o)} aria-label="検索" aria-expanded={open} className="btn-ghost text-base">🔍</button>
       {open && (
-        <div className="absolute right-0 z-40 mt-2 w-[min(90vw,24rem)]">
+        <div className="fixed inset-x-3 top-14 z-40 sm:absolute sm:inset-x-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-[min(90vw,24rem)]">
           <GlobalSearch compact />
         </div>
       )}
